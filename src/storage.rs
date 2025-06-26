@@ -41,8 +41,14 @@ pub trait ShareStore {
 
 /// File system implementation of ShareStore
 ///
-/// Stores each share as a separate file in the format:
-/// `share_<index>` (e.g., share_001, share_002)
+/// Stores each share as a separate file with a secure binary format including
+/// magic numbers and version information to prevent format confusion attacks.
+/// Files are named in the format: `share_<index>` (e.g., share_001, share_002)
+///
+/// # Security
+/// - Files include magic number validation to prevent format attacks
+/// - Version checking ensures compatibility
+/// - Atomic write operations prevent partial file corruption
 ///
 /// # Example
 /// ```
@@ -57,6 +63,7 @@ pub trait ShareStore {
 ///     data: vec![1, 2, 3],
 ///     threshold: 3,
 ///     total_shares: 5,
+///     integrity_check: true,
 /// };
 ///
 /// store.store_share(&share).unwrap();
@@ -157,6 +164,7 @@ impl ShareStore for FileShareStore {
             data,
             threshold,
             total_shares,
+            integrity_check: true, // Default to true for backward compatibility
         })
     }
 
@@ -208,6 +216,7 @@ mod tests {
             data: vec![1, 2, 3, 4, 5],
             threshold: 3,    // Added threshold
             total_shares: 5, // Added total_shares
+            integrity_check: true,
         };
 
         // Store share
@@ -260,6 +269,7 @@ mod tests {
                 data: vec![i; 5],
                 threshold: 3,    // Added threshold
                 total_shares: 5, // Added total_shares
+                integrity_check: true,
             };
             store.store_share(&share)?;
         }
@@ -289,6 +299,7 @@ mod tests {
             data: vec![1, 2, 3],
             threshold: 3,
             total_shares: 5,
+            integrity_check: true,
         };
 
         store.store_share(&share)?;
@@ -310,6 +321,7 @@ mod tests {
             data: vec![1, 2, 3],
             threshold: 3,
             total_shares: 5,
+            integrity_check: true,
         };
 
         assert!(matches!(

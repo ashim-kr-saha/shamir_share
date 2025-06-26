@@ -1,8 +1,15 @@
 //! A secure and efficient Rust library for Shamir's Secret Sharing
 //!
-//! This library provides an implementation of Shamir's Secret Sharing scheme,
-//! allowing sensitive data to be split into multiple shares, where a threshold
-//! number of shares is required to reconstruct the original data.
+//! This library provides a security-first implementation of Shamir's Secret Sharing scheme
+//! with constant-time operations to prevent side-channel attacks. Split sensitive data
+//! into multiple shares where only a threshold number is needed for reconstruction.
+//!
+//! ## Security Features
+//!
+//! - **Constant-time GF(2^8) arithmetic** - No lookup tables, resistant to cache-timing attacks
+//! - **Cryptographically secure random generation** - Uses ChaCha20Rng seeded from OsRng  
+//! - **Integrity verification** - SHA-256 hash checking with constant-time comparison
+//! - **Memory safety** - Written in safe Rust with zero unsafe blocks
 //!
 //! # Quick Start
 //!
@@ -42,13 +49,13 @@ mod storage;
 pub use config::{Config, SplitMode};
 pub use error::{Result, ShamirError};
 pub use finite_field::FiniteField;
-pub use shamir::{ShamirShare, Share};
+pub use shamir::{ShamirShare, ShamirShareBuilder, Share};
 pub use storage::{FileShareStore, ShareStore};
 
 // Re-export common types for convenience
 pub mod prelude {
     pub use super::{
-        Config, FileShareStore, Result, ShamirError, ShamirShare, Share, ShareStore, SplitMode,
+        Config, FileShareStore, Result, ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareStore, SplitMode,
     };
 }
 
