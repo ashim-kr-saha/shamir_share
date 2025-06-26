@@ -6,7 +6,7 @@ authors = ["Ashim Kumar Saha"]
 description = "A secure and efficient Rust library for Shamir's Secret Sharing"
 license = "Apache-2.0"
 repository = "https://github.com/ashim_kr_saha/shamir_share"
-keywords = ["cryptography", "secret-sharing", "security", "shamir", "shamir-secret-sharing"]
+keywords = ["cryptography", "secret-sharing", "security", "shamir"]
 categories = ["cryptography", "algorithms"]
 
 [dependencies]
