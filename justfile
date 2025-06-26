@@ -17,6 +17,12 @@ coverage:
 bench:
     cargo bench
 
+bench-streaming:
+    cargo bench --bench streaming_benchmarks
+
+bench-shamir:
+    cargo bench --bench shamir_benchmarks
+
 # Run clippy lints
 lint:
     cargo clippy -- -D warnings

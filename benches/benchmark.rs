@@ -3,6 +3,9 @@ use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
 use shamir_share::ShamirShare;
 
+// Note: For streaming I/O benchmarks, see benches/streaming_benchmarks.rs
+// For comprehensive benchmarks across data sizes, see benches/shamir_benchmarks.rs
+
 fn benchmark_split(c: &mut Criterion) {
     // Initialize the scheme with many shares to stress the splitting routine
     let mut scheme = ShamirShare::new(255, 3).unwrap();

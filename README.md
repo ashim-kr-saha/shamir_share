@@ -1,6 +1,6 @@
 # shamir_share
 
-A secure and efficient Rust library for Shamir's Secret Sharing, designed for splitting and reconstructing sensitive data across multiple locations.
+A secure and efficient Rust library for Shamir's Secret Sharing, built with a security-first, constant-time design to prevent side-channel attacks. Split sensitive data into multiple shares where only a threshold number is needed for reconstruction.
 
 [![Crates.io](https://img.shields.io/crates/v/shamir_share.svg)](https://crates.io/crates/shamir_share)
 [![Documentation](https://docs.rs/shamir_share/badge.svg)](https://docs.rs/shamir_share)
@@ -110,13 +110,30 @@ let mut shamir = ShamirShare::new(5, 3)?;
 // ... proceed with splitting and reconstruction
 ```
 
-## Security Considerations
+## Security
 
-- **Cryptographically Secure Random Generation**: The implementation uses `ChaCha20Rng` seeded from `OsRng` for polynomial creation, ensuring that each set of shares is unique and unpredictable.
-- **Constant-Time Cryptographic Operations**: All finite field arithmetic operations (multiplication, inversion, etc.) are implemented using constant-time algorithms to prevent timing side-channel attacks. This is a deliberate security-performance tradeoff that prioritizes security over raw speed.
-- **Data Integrity**: SHA-256 hash verification ensures data integrity when reconstructing secrets. The hash is prepended to the secret before splitting and verified during reconstruction using constant-time comparison.
-- **File Format Security**: Share files include magic numbers and version information to prevent format attacks and ensure compatibility.
-- **Share Distribution**: It is the responsibility of the user to distribute and store the shares in a secure manner. For example, storing shares on different physical devices or in different cloud storage regions.
+This library is designed with security as the primary concern, implementing multiple layers of protection against various attack vectors:
+
+### Cryptographic Security Guarantees
+
+- **Constant-Time GF(2^8) Arithmetic**: All finite field operations use constant-time algorithms with no lookup tables, preventing cache-timing side-channel attacks
+- **Resistant to Side-Channel Attacks**: Russian Peasant Multiplication and Fermat's Little Theorem for inversion ensure consistent execution time regardless of input values
+- **Cryptographically Secure Random Number Generation**: Uses `ChaCha20Rng` seeded from `OsRng` for polynomial coefficient generation
+- **Integrity Checking**: SHA-256 hash verification with constant-time comparison prevents tampering detection
+- **No Information Leakage**: Individual shares reveal no information about the secret without meeting the threshold
+
+### Implementation Security Features
+
+- **Memory Safety**: Written in Rust with zero unsafe code blocks
+- **Constant-Time Hash Comparison**: Prevents timing attacks during integrity verification
+- **Secure Share Format**: Magic numbers and version checks prevent format confusion attacks
+- **Parallel Processing**: Uses Rayon for safe parallel computation without compromising security
+
+### Security Considerations for Users
+
+- **Share Distribution**: Distribute and store shares in different physical locations
+- **Access Control**: Implement proper access controls for share storage locations
+- **Network Security**: Use secure channels when transmitting shares over networks
 
 ### Security-Performance Tradeoff
 
@@ -143,7 +160,7 @@ For detailed API documentation, please visit [docs.rs/shamir_share](https://docs
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to this project.
 
 ## License
 
