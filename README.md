@@ -93,23 +93,6 @@ let reconstructed = ShamirShare::reconstruct(&reconstruction_shares)?;
 assert_eq!(&reconstructed, secret);
 ```
 
-### Custom Configuration
-
-```rust
-use shamir_share::{Config, ShamirShare, SplitMode};
-
-// Create a custom configuration
-let config = Config::new()
-    .with_chunk_size(1024)?
-    .with_mode(SplitMode::Sequential)
-    .with_compression(true)
-    .with_integrity_check(true);
-
-// Use the configuration when creating shares
-let mut shamir = ShamirShare::new(5, 3)?;
-// ... proceed with splitting and reconstruction
-```
-
 ## Security
 
 This library is designed with security as the primary concern, implementing multiple layers of protection against various attack vectors:
