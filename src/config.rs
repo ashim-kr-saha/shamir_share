@@ -65,6 +65,7 @@ impl Config {
     }
 
     /// Enables or disables compression
+    #[cfg(feature = "compress")]
     pub fn with_compression(mut self, enabled: bool) -> Self {
         self.compression = enabled;
         self
@@ -103,16 +104,20 @@ mod tests {
 
     #[test]
     fn test_config_builder() {
-        let config = Config::new()
+        let mut config = Config::new()
             .with_chunk_size(4096)
             .unwrap()
             .with_mode(SplitMode::Parallel)
-            .with_compression(true)
             .with_integrity_check(false);
+
+        #[cfg(feature = "compress")]
+        {
+            config = config.with_compression(true);
+            assert!(config.compression);
+        }
 
         assert_eq!(config.chunk_size, 4096);
         assert_eq!(config.mode, SplitMode::Parallel);
-        assert!(config.compression);
         assert!(!config.integrity_check);
     }
 

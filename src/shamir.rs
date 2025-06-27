@@ -51,6 +51,8 @@ pub struct Share {
     pub total_shares: u8,
     /// Whether integrity checking was enabled when this share was created
     pub integrity_check: bool,
+    /// Whether the data was compressed before splitting
+    pub compression: bool,
 }
 
 /// Lazy iterator for generating shares using Shamir's Secret Sharing
@@ -95,6 +97,8 @@ pub struct Dealer {
     total_shares: u8,
     /// Whether integrity checking is enabled
     integrity_check: bool,
+    /// Whether the data was compressed before splitting
+    compression: bool,
 }
 
 /// Main implementation of Shamir's Secret Sharing scheme
@@ -305,10 +309,29 @@ impl ShamirShare {
             let hash = Sha256::digest(secret);
             let mut data = Vec::with_capacity(HASH_SIZE + secret.len());
             data.extend_from_slice(&hash);
+            #[cfg(feature = "compress")]
+            if self.config.compression {
+                let compressed_secret = zstd::encode_all(secret, 0)
+                    .map_err(|e| ShamirError::CompressionError(e.to_string()))
+                    .unwrap();
+                data.extend_from_slice(&compressed_secret);
+            } else {
+                data.extend_from_slice(secret);
+            }
+            #[cfg(not(feature = "compress"))]
             data.extend_from_slice(secret);
             data
         } else {
             // Use secret data directly without integrity hash
+            #[cfg(feature = "compress")]
+            if self.config.compression {
+                zstd::encode_all(secret, 0)
+                    .map_err(|e| ShamirError::CompressionError(e.to_string()))
+                    .unwrap()
+            } else {
+                secret.to_vec()
+            }
+            #[cfg(not(feature = "compress"))]
             secret.to_vec()
         };
 
@@ -326,6 +349,7 @@ impl ShamirShare {
             threshold: self.threshold,
             total_shares: self.total_shares,
             integrity_check: self.config.integrity_check,
+            compression: self.config.compression,
         };
 
         // Zeroize sensitive buffers before returning
@@ -421,12 +445,14 @@ impl ShamirShare {
         }
 
         let integrity_check = shares[0].integrity_check;
+        let compression = shares[0].compression;
 
         // Ensure all shares have consistent properties
-        if !shares
-            .iter()
-            .all(|s| s.data.len() == shares[0].data.len() && s.integrity_check == integrity_check)
-        {
+        if !shares.iter().all(|s| {
+            s.data.len() == shares[0].data.len()
+                && s.integrity_check == integrity_check
+                && s.compression == compression
+        }) {
             return Err(ShamirError::InconsistentShareLength);
         }
 
@@ -440,10 +466,22 @@ impl ShamirShare {
             if reconstructed_data.len() < HASH_SIZE {
                 return Err(ShamirError::IntegrityCheckFailed);
             }
-            let (reconstructed_hash, secret) = reconstructed_data.split_at(HASH_SIZE);
+            let (reconstructed_hash, compressed_secret) = reconstructed_data.split_at(HASH_SIZE);
+
+            let secret = {
+                #[cfg(feature = "compress")]
+                if compression {
+                    zstd::decode_all(compressed_secret)
+                        .map_err(|e| ShamirError::DecompressionError(e.to_string()))?
+                } else {
+                    compressed_secret.to_vec()
+                }
+                #[cfg(not(feature = "compress"))]
+                compressed_secret.to_vec()
+            };
 
             // Verify the integrity of the secret using constant-time comparison
-            let calculated_hash = Sha256::digest(secret);
+            let calculated_hash = Sha256::digest(&secret);
             let mut hash_match = 0u8;
             for (a, b) in calculated_hash
                 .as_slice()
@@ -456,9 +494,17 @@ impl ShamirShare {
                 return Err(ShamirError::IntegrityCheckFailed);
             }
 
-            Ok(secret.to_vec())
+            Ok(secret)
         } else {
             // Shares were created without integrity checking - return data directly
+            #[cfg(feature = "compress")]
+            if compression {
+                zstd::decode_all(reconstructed_data.as_slice())
+                    .map_err(|e| ShamirError::DecompressionError(e.to_string()))
+            } else {
+                Ok(reconstructed_data.clone())
+            }
+            #[cfg(not(feature = "compress"))]
             Ok(reconstructed_data.clone())
         };
 
@@ -529,16 +575,13 @@ impl ShamirShare {
             )));
         }
 
-        // Write integrity check flag and share index to all destinations as a header
-        let integrity_flag = if self.config.integrity_check {
-            1u8
-        } else {
-            0u8
-        };
+        // Write header (flags + share index) to all destinations
+        let integrity_flag = if self.config.integrity_check { 1 } else { 0 };
+        let compression_flag = if self.config.compression { 2 } else { 0 };
+        let flags = integrity_flag | compression_flag;
+
         for (i, dest) in destinations.iter_mut().enumerate() {
-            dest.write_all(&[integrity_flag])
-                .map_err(ShamirError::IoError)?;
-            dest.write_all(&[(i + 1) as u8]) // Share index (1-based)
+            dest.write_all(&[flags, (i + 1) as u8])
                 .map_err(ShamirError::IoError)?;
         }
 
@@ -578,14 +621,20 @@ impl ShamirShare {
             // Reuse buffer to avoid allocations in the hot loop
             chunk_with_hash_buffer.clear();
             if self.config.integrity_check {
-                // Calculate hash of the chunk and prepend it for integrity verification
                 let hash = Sha256::digest(chunk);
                 chunk_with_hash_buffer.extend_from_slice(&hash);
-                chunk_with_hash_buffer.extend_from_slice(chunk);
+            }
+
+            #[cfg(feature = "compress")]
+            if self.config.compression {
+                let compressed_chunk = zstd::encode_all(chunk, 0)
+                    .map_err(|e| ShamirError::CompressionError(e.to_string()))?;
+                chunk_with_hash_buffer.extend_from_slice(&compressed_chunk);
             } else {
-                // Use chunk data directly without integrity hash
                 chunk_with_hash_buffer.extend_from_slice(chunk);
-            };
+            }
+            #[cfg(not(feature = "compress"))]
+            chunk_with_hash_buffer.extend_from_slice(chunk);
 
             // Split the chunk using the unified split_chunk method
             let chunk_share_data = self.split_chunk(&chunk_with_hash_buffer)?;
@@ -698,37 +747,28 @@ impl ShamirShare {
         }
 
         // Read integrity check flag and share indices from all sources
-        let mut integrity_flag = [0u8; 1];
-        sources[0]
-            .read_exact(&mut integrity_flag)
-            .map_err(ShamirError::IoError)?;
-        let integrity_check = integrity_flag[0] != 0;
+        let mut headers: Vec<[u8; 2]> = Vec::with_capacity(sources.len());
+        for source in sources.iter_mut() {
+            let mut header = [0u8; 2];
+            source
+                .read_exact(&mut header)
+                .map_err(ShamirError::IoError)?;
+            headers.push(header);
+        }
 
-        let mut share_indices = Vec::with_capacity(sources.len());
+        let first_flags = headers[0][0];
+        let integrity_check = (first_flags & 1) != 0;
+        let compression = (first_flags & 2) != 0;
 
-        // Read share index from first source
-        let mut share_index = [0u8; 1];
-        sources[0]
-            .read_exact(&mut share_index)
-            .map_err(ShamirError::IoError)?;
-        share_indices.push(share_index[0]);
-
-        // Read integrity flags and share indices from other sources
-        for source in sources.iter_mut().skip(1) {
-            let mut flag = [0u8; 1];
-            source.read_exact(&mut flag).map_err(ShamirError::IoError)?;
-            if flag[0] != integrity_flag[0] {
+        for header in headers.iter().skip(1) {
+            if header[0] != first_flags {
                 return Err(ShamirError::InvalidConfig(
-                    "Inconsistent integrity check flags across sources".to_string(),
+                    "Inconsistent flags across sources".to_string(),
                 ));
             }
-
-            let mut index = [0u8; 1];
-            source
-                .read_exact(&mut index)
-                .map_err(ShamirError::IoError)?;
-            share_indices.push(index[0]);
         }
+
+        let share_indices: Vec<u8> = headers.iter().map(|h| h[1]).collect();
 
         // Pre-allocate buffers to reuse across chunks to avoid allocations in hot loop
         let mut chunk_lengths_buffer = Vec::with_capacity(sources.len());
@@ -791,6 +831,7 @@ impl ShamirShare {
                     threshold,
                     total_shares,
                     integrity_check,
+                    compression,
                 });
             }
 
@@ -806,10 +847,22 @@ impl ShamirShare {
                 if reconstructed_chunk.len() < HASH_SIZE {
                     return Err(ShamirError::IntegrityCheckFailed);
                 }
-                let (reconstructed_hash, data) = reconstructed_chunk.split_at(HASH_SIZE);
+                let (reconstructed_hash, compressed_data) = reconstructed_chunk.split_at(HASH_SIZE);
+
+                let data = {
+                    #[cfg(feature = "compress")]
+                    if compression {
+                        zstd::decode_all(compressed_data)
+                            .map_err(|e| ShamirError::DecompressionError(e.to_string()))?
+                    } else {
+                        compressed_data.to_vec()
+                    }
+                    #[cfg(not(feature = "compress"))]
+                    compressed_data.to_vec()
+                };
 
                 // Verify the integrity of the data using constant-time comparison
-                let calculated_hash = Sha256::digest(data);
+                let calculated_hash = Sha256::digest(&data);
                 let mut hash_match = 0u8;
                 for (a, b) in calculated_hash
                     .as_slice()
@@ -823,9 +876,20 @@ impl ShamirShare {
                 }
 
                 // Write only the data part (without hash) to destination
-                destination.write_all(data).map_err(ShamirError::IoError)?;
+                destination.write_all(&data).map_err(ShamirError::IoError)?;
             } else {
                 // No integrity checking - write data directly
+                #[cfg(feature = "compress")]
+                if compression {
+                    let data = zstd::decode_all(reconstructed_chunk)
+                        .map_err(|e| ShamirError::DecompressionError(e.to_string()))?;
+                    destination.write_all(&data).map_err(ShamirError::IoError)?;
+                } else {
+                    destination
+                        .write_all(reconstructed_chunk)
+                        .map_err(ShamirError::IoError)?;
+                }
+                #[cfg(not(feature = "compress"))]
                 destination
                     .write_all(reconstructed_chunk)
                     .map_err(ShamirError::IoError)?;
@@ -1077,9 +1141,13 @@ impl ShamirShare {
     /// - Uses cryptographically secure random coefficients
     /// - Constant-time polynomial evaluation using Horner's method
     /// - Zero constant term ensures deltas maintain the secret sharing property
-    fn generate_zero_polynomial_shares(&mut self, share_indices: &[u8], data_length: usize) -> Result<Vec<Vec<u8>>> {
+    fn generate_zero_polynomial_shares(
+        &mut self,
+        share_indices: &[u8],
+        data_length: usize,
+    ) -> Result<Vec<Vec<u8>>> {
         let t = self.threshold as usize;
-        
+
         // Generate random coefficients for all data bytes (for coefficients 1..t)
         // The constant term (coefficient 0) is always zero for all bytes
         let mut random_data = vec![0u8; data_length * (t - 1)];
@@ -1090,12 +1158,12 @@ impl ShamirShare {
             .iter()
             .map(|&index| {
                 let x = FiniteField::new(index);
-                
+
                 // For each byte position, evaluate the polynomial at x
                 (0..data_length)
                     .map(|byte_idx| {
                         let mut acc = FiniteField::new(0);
-                        
+
                         // Evaluate polynomial using Horner's method (iterating coefficients in reverse order)
                         // P(x) = 0 + random_coef1 * x + random_coef2 * x^2 + ... + random_coef_{t-1} * x^(t-1)
                         for j in (1..t).rev() {
@@ -1103,11 +1171,11 @@ impl ShamirShare {
                             let coeff = FiniteField::new(random_data[byte_idx * (t - 1) + (j - 1)]);
                             acc = acc * x + coeff;
                         }
-                        
+
                         // Note: We skip j=0 because the constant term is always FiniteField(0)
                         // The final multiplication by x handles the last coefficient
                         acc = acc * x;
-                        
+
                         acc.0
                     })
                     .collect()
@@ -1169,18 +1237,18 @@ impl ShamirShare {
     ///
     /// let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
     /// let secret = b"sensitive data";
-    /// 
+    ///
     /// // Create initial shares
     /// let original_shares = scheme.split(secret).unwrap();
-    /// 
+    ///
     /// // Refresh the shares to invalidate old ones
     /// let refreshed_shares = scheme.refresh_shares(&original_shares[0..3]).unwrap();
-    /// 
+    ///
     /// // Both sets reconstruct to the same secret
     /// let original_secret = ShamirShare::reconstruct(&original_shares[0..3]).unwrap();
     /// let refreshed_secret = ShamirShare::reconstruct(&refreshed_shares).unwrap();
     /// assert_eq!(original_secret, refreshed_secret);
-    /// 
+    ///
     /// // But the share data is completely different
     /// assert_ne!(original_shares[0].data, refreshed_shares[0].data);
     /// ```
@@ -1208,7 +1276,10 @@ impl ShamirShare {
         let integrity_check = shares[0].integrity_check;
 
         // Input validation: Check that all shares have consistent data length and integrity check setting
-        if !shares.iter().all(|s| s.data.len() == data_length && s.integrity_check == integrity_check) {
+        if !shares
+            .iter()
+            .all(|s| s.data.len() == data_length && s.integrity_check == integrity_check)
+        {
             return Err(ShamirError::InconsistentShareLength);
         }
 
@@ -1238,6 +1309,7 @@ impl ShamirShare {
                     threshold: old_share.threshold,
                     total_shares: old_share.total_shares,
                     integrity_check: old_share.integrity_check,
+                    compression: old_share.compression,
                 }
             })
             .collect();
@@ -1295,6 +1367,7 @@ impl Iterator for Dealer {
             threshold: self.threshold,
             total_shares: self.total_shares,
             integrity_check: self.integrity_check,
+            compression: self.compression,
         };
 
         // Increment x for next share, wrapping to 0 when we reach 256 (which stops iteration)
@@ -1732,7 +1805,7 @@ mod tests {
             .map(|cursor| cursor.into_inner())
             .collect();
 
-        // All shares should contain only the header (2 bytes: integrity flag + share index) for empty input
+        // All shares should contain only the header (2 bytes: flags + share index) for empty input
         for share in &share_data {
             assert_eq!(share.len(), 2); // Only header, no chunk data
         }
@@ -1815,7 +1888,7 @@ mod tests {
             let mut cursor = Cursor::new(share);
             let mut total_chunks = 0;
 
-            // Skip header (integrity flag + share index)
+            // Skip header (flags + share index)
             let mut header = [0u8; 2];
             cursor.read_exact(&mut header).unwrap();
 
@@ -2212,22 +2285,22 @@ mod tests {
     fn test_zeroize_feature_compilation() {
         // This test ensures that the zeroize feature compiles correctly
         // and that the derives are applied properly
-        
+
         let secret = b"test secret for zeroize";
         let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
-        
+
         // Test that Share struct has Zeroize and ZeroizeOnDrop derives
         let shares = shamir.split(secret).unwrap();
         assert_eq!(shares.len(), 5);
-        
+
         // Test that Dealer struct has Zeroize and ZeroizeOnDrop derives
         let dealer_shares: Vec<Share> = shamir.dealer(secret).take(3).collect();
         assert_eq!(dealer_shares.len(), 3);
-        
+
         // Test reconstruction still works
         let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
         assert_eq!(&reconstructed, secret);
-        
+
         // Test that FiniteField has Zeroize derive
         let mut field = crate::FiniteField::new(42);
         field.zeroize();
@@ -2238,24 +2311,24 @@ mod tests {
     #[cfg(feature = "zeroize")]
     fn test_share_zeroize_on_drop() {
         use zeroize::Zeroize;
-        
+
         let secret = b"test secret for drop";
         let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
-        
+
         // Create a share in a limited scope
         let share_data = {
             let shares = shamir.split(secret).unwrap();
             shares[0].data.clone()
         }; // Share is dropped here, should be zeroized automatically
-        
+
         // Verify we can still use the cloned data
         assert!(!share_data.is_empty());
-        
+
         // Test manual zeroization
         let mut shares = shamir.split(secret).unwrap();
         let original_data = shares[0].data.clone();
         shares[0].zeroize();
-        
+
         // After zeroization, the share data should be zeroed
         assert!(shares[0].data.iter().all(|&b| b == 0));
         assert_ne!(original_data, shares[0].data);

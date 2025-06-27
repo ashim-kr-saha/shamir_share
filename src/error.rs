@@ -40,9 +40,11 @@ pub enum ShamirError {
     #[error("Inconsistent share lengths")]
     InconsistentShareLength,
 
+    #[cfg(feature = "compress")]
     #[error("Compression error: {0}")]
     CompressionError(String),
 
+    #[cfg(feature = "compress")]
     #[error("Decompression error: {0}")]
     DecompressionError(String),
 

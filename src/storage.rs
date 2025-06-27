@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use crate::error::{Result, ShamirError};
 use crate::shamir::Share;
 
-const MAGIC_NUMBER: &[u8] = b"SHR1";
-const VERSION: u8 = 1;
+const MAGIC_NUMBER: &[u8] = b"SHS1"; // Changed magic number for new format
+const VERSION: u8 = 2; // Incremented version for new format
 
 /// Trait defining storage operations for Shamir shares
 ///
@@ -64,6 +64,7 @@ pub trait ShareStore {
 ///     threshold: 3,
 ///     total_shares: 5,
 ///     integrity_check: true,
+///     compression: false,
 /// };
 ///
 /// store.store_share(&share).unwrap();
@@ -108,6 +109,10 @@ impl ShareStore for FileShareStore {
         writer.write_all(&[VERSION])?;
 
         // Write metadata
+        let integrity_flag = if share.integrity_check { 1 } else { 0 };
+        let compression_flag = if share.compression { 2 } else { 0 };
+        let flags = integrity_flag | compression_flag;
+        writer.write_all(&[flags])?;
         writer.write_all(&[share.index, share.threshold, share.total_shares])?;
 
         // Write data
@@ -137,11 +142,16 @@ impl ShareStore for FileShareStore {
 
         let mut version = [0u8; 1];
         file.read_exact(&mut version)?;
-        if version[0] != VERSION {
+        if version[0] > VERSION {
             return Err(ShamirError::InvalidShareFormat);
         }
 
         // Read metadata
+        let mut flags = [0u8; 1];
+        file.read_exact(&mut flags)?;
+        let integrity_check = (flags[0] & 1) != 0;
+        let compression = (flags[0] & 2) != 0;
+
         let mut header = [0u8; 3];
         file.read_exact(&mut header)?;
         let (stored_index, threshold, total_shares) = (header[0], header[1], header[2]);
@@ -164,7 +174,8 @@ impl ShareStore for FileShareStore {
             data,
             threshold,
             total_shares,
-            integrity_check: true, // Default to true for backward compatibility
+            integrity_check,
+            compression,
         })
     }
 
@@ -217,6 +228,7 @@ mod tests {
             threshold: 3,    // Added threshold
             total_shares: 5, // Added total_shares
             integrity_check: true,
+            compression: false,
         };
 
         // Store share
@@ -270,6 +282,7 @@ mod tests {
                 threshold: 3,    // Added threshold
                 total_shares: 5, // Added total_shares
                 integrity_check: true,
+                compression: false,
             };
             store.store_share(&share)?;
         }
@@ -300,6 +313,7 @@ mod tests {
             threshold: 3,
             total_shares: 5,
             integrity_check: true,
+            compression: false,
         };
 
         store.store_share(&share)?;
@@ -322,6 +336,7 @@ mod tests {
             threshold: 3,
             total_shares: 5,
             integrity_check: true,
+            compression: false,
         };
 
         assert!(matches!(
