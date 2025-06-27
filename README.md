@@ -12,17 +12,23 @@ A secure and efficient Rust library for Shamir's Secret Sharing, built with a se
 
 ### Key Features
 
-- Split data into customizable number of shares (n)
-- Define threshold (k) for minimum shares needed for reconstruction
+- **Flexible Share Generation:**
+  - Split data into customizable number of shares (n)
+  - Define threshold (k) for minimum shares needed for reconstruction
+  - Lazy iterator-based share generation with `Dealer` for memory efficiency
+  - Support for up to 255 shares (GF(256) field limitation)
 - **Strong Security Features:**
   - Secure random number generation using `ChaCha20Rng`
   - Constant-time cryptographic operations to prevent side-channel attacks
   - SHA-256 integrity verification of reconstructed secrets
   - Magic number and version checks for share file format
-- Zero-copy operations for efficient memory usage
-- Streaming support for large files
-- Cross-platform compatibility
-- Comprehensive error handling
+  - Comprehensive fuzzing for robustness testing
+- **Performance & Usability:**
+  - Zero-copy operations for efficient memory usage
+  - Streaming support for large files
+  - Builder pattern for ergonomic configuration
+  - Cross-platform compatibility
+  - Comprehensive error handling
 
 ## Installation
 
@@ -35,6 +41,7 @@ shamir_share = "0.1.0"
 
 ## Quick Start
 
+### Basic Usage
 ```rust
 use shamir_share::{ShamirShare, FileShareStore, ShareStore};
 
@@ -59,6 +66,26 @@ let loaded_shares = vec![
     store.load_share(3).unwrap(),
 ];
 let reconstructed = ShamirShare::reconstruct(&loaded_shares).unwrap();
+assert_eq!(reconstructed, secret);
+```
+
+### Lazy Share Generation with Dealer
+```rust
+use shamir_share::ShamirShare;
+
+let mut scheme = ShamirShare::builder(10, 5).build().unwrap();
+let secret = b"my secret data";
+
+// Generate only the shares you need
+let shares: Vec<_> = scheme.dealer(secret).take(5).collect();
+
+// Or use iterator methods for advanced filtering
+let even_shares: Vec<_> = scheme.dealer(secret)
+    .filter(|share| share.index % 2 == 0)
+    .take(5)
+    .collect();
+
+let reconstructed = ShamirShare::reconstruct(&shares).unwrap();
 assert_eq!(reconstructed, secret);
 ```
 
@@ -135,15 +162,69 @@ For detailed API documentation, please visit [docs.rs/shamir_share](https://docs
 ### Core Types
 
 - `ShamirShare`: Main implementation of Shamir's Secret Sharing scheme
+- `ShamirShareBuilder`: Builder pattern for configuring `ShamirShare` instances
+- `Dealer`: Lazy iterator for generating shares on-demand
 - `Share`: Represents a single share of the secret
 - `FileShareStore`: File-based storage for shares
 - `ShareStore`: Trait for implementing custom storage backends
 - `Config`: Configuration options for the sharing process
 - `SplitMode`: Enum for specifying how data is split (Sequential or Parallel)
 
+## Development & Testing
+
+### Running Tests
+```bash
+# Run all tests
+cargo test
+
+# Run tests with coverage
+cargo test --all-features
+
+# Run benchmarks
+cargo bench
+```
+
+### Fuzzing for Security
+This library includes comprehensive fuzzing targets to ensure robustness against malformed inputs:
+
+```bash
+# Install nightly Rust and cargo-fuzz
+rustup install nightly
+cargo +nightly install cargo-fuzz
+
+# Run fuzzing targets
+cd fuzz
+cargo +nightly fuzz run fuzz_reconstruct    # Test reconstruction logic
+cargo +nightly fuzz run fuzz_share_storage  # Test share parsing logic
+
+# Or use the convenience script
+./run_fuzz.sh all 300  # Run all targets for 5 minutes each
+```
+
+The fuzzing targets test:
+- **Reconstruction robustness**: Invalid shares, corrupted data, edge cases
+- **Storage parsing**: Malformed files, truncated data, invalid headers
+- **Memory safety**: Buffer overruns, integer overflows, panic conditions
+
+### Performance Testing
+```bash
+# Run streaming benchmarks
+./run_streaming_benchmarks.sh
+
+# Compare with baseline
+cargo run --release --bin performance_compare
+```
+
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to this project.
+
+### Security Considerations for Contributors
+
+- All cryptographic operations must be constant-time
+- New features should include comprehensive fuzzing targets
+- Performance changes should be benchmarked
+- Security-sensitive code requires additional review
 
 ## License
 
