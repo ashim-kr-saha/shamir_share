@@ -1,5 +1,8 @@
 use std::ops::{Add, Mul, Sub};
 
+#[cfg(feature = "zeroize")]
+use zeroize::Zeroize;
+
 /// Constant-time multiplication in GF(2^8)
 ///
 /// Implements the Russian Peasant Multiplication algorithm which is
@@ -61,6 +64,7 @@ fn gf256_inverse_const_time(a: u8) -> u8 {
 /// let product = a * b;  // Carryless multiplication
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "zeroize", derive(Zeroize))]
 pub struct FiniteField(pub u8);
 
 impl FiniteField {

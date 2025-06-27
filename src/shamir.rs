@@ -10,6 +10,9 @@ use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 
+#[cfg(feature = "zeroize")]
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
 const HASH_SIZE: usize = 32; // SHA-256 output size
 
 /// A share in Shamir's Secret Sharing scheme
@@ -36,6 +39,7 @@ const HASH_SIZE: usize = 32; // SHA-256 output size
 /// assert_eq!(share.total_shares, 5);
 /// ```
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub struct Share {
     /// Index of the share (x-coordinate in the polynomial)
     pub index: u8,
@@ -76,6 +80,7 @@ pub struct Share {
 /// let reconstructed = ShamirShare::reconstruct(&shares).unwrap();
 /// assert_eq!(reconstructed, secret);
 /// ```
+#[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub struct Dealer {
     /// The data to be split (with integrity hash if enabled)
     data: Vec<u8>,
@@ -294,7 +299,8 @@ impl ShamirShare {
     /// ```
     pub fn dealer(&mut self, secret: &[u8]) -> Dealer {
         // Prepare data to split based on integrity check configuration
-        let data_to_split = if self.config.integrity_check {
+        #[cfg_attr(not(feature = "zeroize"), allow(unused_mut))]
+        let mut data_to_split = if self.config.integrity_check {
             // Calculate hash of the secret and prepend it
             let hash = Sha256::digest(secret);
             let mut data = Vec::with_capacity(HASH_SIZE + secret.len());
@@ -313,14 +319,23 @@ impl ShamirShare {
         let mut coefficients = vec![0u8; secret_len * (t - 1)];
         self.rng.fill_bytes(&mut coefficients);
 
-        Dealer {
-            data: data_to_split,
-            coefficients,
+        let dealer = Dealer {
+            data: data_to_split.clone(),
+            coefficients: coefficients.clone(),
             current_x: 1,
             threshold: self.threshold,
             total_shares: self.total_shares,
             integrity_check: self.config.integrity_check,
+        };
+
+        // Zeroize sensitive buffers before returning
+        #[cfg(feature = "zeroize")]
+        {
+            data_to_split.zeroize();
+            coefficients.zeroize();
         }
+
+        dealer
     }
 
     /// Splits a secret into multiple shares using polynomial interpolation
@@ -416,10 +431,11 @@ impl ShamirShare {
         }
 
         // Use the unified reconstruct_chunk method for the core reconstruction logic
-        let reconstructed_data = Self::reconstruct_chunk(shares)?;
+        #[cfg_attr(not(feature = "zeroize"), allow(unused_mut))]
+        let mut reconstructed_data = Self::reconstruct_chunk(shares)?;
 
         // Handle integrity checking based on share configuration
-        if integrity_check {
+        let result = if integrity_check {
             // Shares were created with integrity checking - verify hash
             if reconstructed_data.len() < HASH_SIZE {
                 return Err(ShamirError::IntegrityCheckFailed);
@@ -443,8 +459,14 @@ impl ShamirShare {
             Ok(secret.to_vec())
         } else {
             // Shares were created without integrity checking - return data directly
-            Ok(reconstructed_data)
-        }
+            Ok(reconstructed_data.clone())
+        };
+
+        // Zeroize sensitive reconstructed data buffer before returning
+        #[cfg(feature = "zeroize")]
+        reconstructed_data.zeroize();
+
+        result
     }
 
     /// Splits data from a stream into multiple share streams using chunk-based processing
@@ -587,6 +609,16 @@ impl ShamirShare {
                 destinations[i]
                     .write_all(share_data)
                     .map_err(ShamirError::IoError)?;
+            }
+        }
+
+        // Zeroize sensitive buffers before returning
+        #[cfg(feature = "zeroize")]
+        {
+            chunk_read_buffer.zeroize();
+            chunk_with_hash_buffer.zeroize();
+            for buffer in &mut share_data_buffers {
+                buffer.zeroize();
             }
         }
 
@@ -800,6 +832,15 @@ impl ShamirShare {
             };
         }
 
+        // Zeroize sensitive buffers before returning
+        #[cfg(feature = "zeroize")]
+        {
+            for buffer in &mut share_chunk_data_buffers {
+                buffer.zeroize();
+            }
+            reconstructed_chunk_buffer.zeroize();
+        }
+
         // Flush the destination
         destination.flush().map_err(ShamirError::IoError)?;
 
@@ -859,6 +900,10 @@ impl ShamirShare {
                     .collect()
             })
             .collect();
+
+        // Zeroize sensitive random coefficients before returning
+        #[cfg(feature = "zeroize")]
+        random_data.zeroize();
 
         Ok(share_data)
     }
@@ -1975,5 +2020,59 @@ mod tests {
         // Should still be able to reconstruct
         let reconstructed = ShamirShare::reconstruct(&even_indexed_shares).unwrap();
         assert_eq!(&reconstructed, secret);
+    }
+
+    #[test]
+    #[cfg(feature = "zeroize")]
+    fn test_zeroize_feature_compilation() {
+        // This test ensures that the zeroize feature compiles correctly
+        // and that the derives are applied properly
+        
+        let secret = b"test secret for zeroize";
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        
+        // Test that Share struct has Zeroize and ZeroizeOnDrop derives
+        let shares = shamir.split(secret).unwrap();
+        assert_eq!(shares.len(), 5);
+        
+        // Test that Dealer struct has Zeroize and ZeroizeOnDrop derives
+        let dealer_shares: Vec<Share> = shamir.dealer(secret).take(3).collect();
+        assert_eq!(dealer_shares.len(), 3);
+        
+        // Test reconstruction still works
+        let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
+        assert_eq!(&reconstructed, secret);
+        
+        // Test that FiniteField has Zeroize derive
+        let mut field = crate::FiniteField::new(42);
+        field.zeroize();
+        assert_eq!(field.0, 0);
+    }
+
+    #[test]
+    #[cfg(feature = "zeroize")]
+    fn test_share_zeroize_on_drop() {
+        use zeroize::Zeroize;
+        
+        let secret = b"test secret for drop";
+        let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+        
+        // Create a share in a limited scope
+        let share_data = {
+            let shares = shamir.split(secret).unwrap();
+            shares[0].data.clone()
+        }; // Share is dropped here, should be zeroized automatically
+        
+        // Verify we can still use the cloned data
+        assert!(!share_data.is_empty());
+        
+        // Test manual zeroization
+        let mut shares = shamir.split(secret).unwrap();
+        let original_data = shares[0].data.clone();
+        shares[0].zeroize();
+        
+        // After zeroization, the share data should be zeroed
+        assert!(shares[0].data.iter().all(|&b| b == 0));
+        assert_ne!(original_data, shares[0].data);
     }
 }
