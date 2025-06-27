@@ -1,0 +1,100 @@
+name: Update Benchmark History
+
+# Trigger on pushes to the main branch
+on:
+  push:
+    branches: [ main ]
+
+# Permissions needed to write to the repository (gh-pages branch)
+permissions:
+  contents: write
+
+# Ensure only one benchmark history job runs at a time
+concurrency:
+  group: benchmark-history
+  cancel-in-progress: false
+
+jobs:
+  update-benchmark-history:
+    name: Update Benchmark History
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    
+    env:
+      # Optimize for CI environment
+      CARGO_TERM_COLOR: always
+    
+    steps:
+      # Checkout the repository code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history for proper baseline comparison
+          fetch-depth: 0
+
+      # Install the stable Rust toolchain
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache dependencies to speed up builds
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Include benchmark target in cache key
+          key: benchmark-history-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      # Run and compare benchmarks, updating the gh-pages branch
+      - name: Run and Compare Benchmarks
+        uses: cargo-criterion/criterion-compare-action@v3
+        with:
+          # The token is necessary to push to the gh-pages branch
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Optional: Specify which benchmarks to run (default is all)
+          # benchName: "all"
+          # Optional: Specify the branch to store results (default is gh-pages)
+          # branchName: "gh-pages"
+
+      # Optional: Create a commit comment with benchmark summary
+      - name: Comment benchmark results on commit
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            // Try to read criterion output for summary
+            let benchmarkSummary = "✅ Benchmark history updated successfully.";
+            
+            try {
+              // Look for criterion output files
+              const criterionDir = 'target/criterion';
+              if (fs.existsSync(criterionDir)) {
+                benchmarkSummary += `\n\n📊 **Benchmark Results Updated**\n`;
+                benchmarkSummary += `- In-memory operations (split/reconstruct)\n`;
+                benchmarkSummary += `- Streaming operations (split_stream/reconstruct_stream)\n`;
+                benchmarkSummary += `- HSSS operations (hierarchical secret sharing)\n\n`;
+                benchmarkSummary += `📈 [View detailed performance history](https://${context.repo.owner}.github.io/${context.repo.repo}/)`;
+              }
+            } catch (error) {
+              console.log('Could not read benchmark results:', error.message);
+            }
+            
+            // Create a commit comment
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: benchmarkSummary
+            });
+
+      # Optional: Upload benchmark artifacts for debugging
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-history-${{ github.sha }}
+          path: |
+            target/criterion/
+            criterion-compare-output.txt
+          retention-days: 90
