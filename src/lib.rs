@@ -17,7 +17,7 @@
 //! use shamir_share::{ShamirShare, FileShareStore, ShareStore};
 //!
 //! // Create a scheme with 5 shares and threshold 3
-//! let mut scheme = ShamirShare::new(5, 3).unwrap();
+//! let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
 //!
 //! // Split a secret
 //! let secret = b"my secret data";
@@ -55,7 +55,8 @@ pub use storage::{FileShareStore, ShareStore};
 // Re-export common types for convenience
 pub mod prelude {
     pub use super::{
-        Config, FileShareStore, Result, ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareStore, SplitMode,
+        Config, FileShareStore, Result, ShamirError, ShamirShare, ShamirShareBuilder, Share,
+        ShareStore, SplitMode,
     };
 }
 
@@ -74,7 +75,7 @@ mod tests {
         let secret = b"This is a secret message that needs to be protected!";
 
         // Configure Shamir's Secret Sharing
-        let mut shamir = ShamirShare::new(5, 3)?;
+        let mut shamir = ShamirShare::builder(5, 3).build()?;
 
         // Split the secret into shares
         let shares = shamir.split(secret)?;
@@ -115,7 +116,7 @@ mod tests {
 
         // Create and split secret
         let secret = b"Secret data with custom configuration";
-        let mut shamir = ShamirShare::new(5, 3)?;
+        let mut shamir = ShamirShare::builder(5, 3).build()?;
         let shares = shamir.split(secret)?;
 
         // Store and reconstruct
@@ -138,12 +139,12 @@ mod tests {
     fn test_error_handling() {
         // Test invalid parameters
         assert!(matches!(
-            ShamirShare::new(2, 3),
+            ShamirShare::builder(2, 3).build(),
             Err(ShamirError::ThresholdTooLarge { .. })
         ));
 
         // Test invalid share reconstruction
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(b"test").unwrap();
 
         // Try to reconstruct with insufficient shares

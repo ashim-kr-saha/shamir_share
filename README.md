@@ -39,7 +39,7 @@ shamir_share = "0.1.0"
 use shamir_share::{ShamirShare, FileShareStore, ShareStore};
 
 // Create a scheme with 5 shares and threshold 3
-let mut scheme = ShamirShare::new(5, 3).unwrap();
+let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
 
 // Split a secret
 let secret = b"my secret data";
@@ -71,7 +71,7 @@ use shamir_share::{ShamirShare, FileShareStore, ShareStore};
 use std::path::Path;
 
 // Create a new ShamirShare instance with 5 shares, threshold of 3
-let mut shamir = ShamirShare::new(5, 3)?;
+let mut shamir = ShamirShare::builder(5, 3).build()?;
 
 // Split a secret
 let secret = b"This is a secret message";

@@ -106,6 +106,7 @@ impl FiniteField {
     /// let base = FiniteField::new(0x03);
     /// assert_eq!(base.exp(3), base * base * base);
     /// ```
+    #[inline]
     pub fn exp(self, mut exp: u32) -> Self {
         let mut result = FiniteField::new(1);
         let mut base = self;
@@ -133,6 +134,7 @@ impl FiniteField {
     /// let inv = a.inverse().unwrap();
     /// assert_eq!(a * inv, FiniteField::new(0x01));
     /// ```
+    #[inline]
     pub fn inverse(self) -> Option<Self> {
         if self.0 == 0 {
             None

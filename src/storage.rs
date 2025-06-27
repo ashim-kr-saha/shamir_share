@@ -93,7 +93,7 @@ impl FileShareStore {
 
     /// Gets the path for a share file
     fn share_path(&self, index: u8) -> PathBuf {
-        self.base_dir.join(format!("share_{:03}", index))
+        self.base_dir.join(format!("share_{index:03}"))
     }
 }
 

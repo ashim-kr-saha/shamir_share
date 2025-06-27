@@ -27,7 +27,7 @@ const HASH_SIZE: usize = 32; // SHA-256 output size
 /// ```
 /// use shamir_share::{Share, ShamirShare};
 ///
-/// let mut shamir = ShamirShare::new(5, 3).unwrap();
+/// let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
 /// let shares = shamir.split(b"secret").unwrap();
 /// let share = &shares[0];
 ///
@@ -67,7 +67,7 @@ pub struct Share {
 /// use shamir_share::ShamirShare;
 ///
 /// // Create a scheme with 5 total shares and threshold of 3
-/// let mut scheme = ShamirShare::new(5, 3).unwrap();
+/// let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
 ///
 /// // Split a secret
 /// let secret = b"my secret data";
@@ -214,37 +214,6 @@ impl ShamirShare {
         ShamirShareBuilder::new(total_shares, threshold)
     }
 
-    /// Creates a new ShamirShare instance with specified parameters and default configuration
-    ///
-    /// # Deprecated
-    /// This method is deprecated in favor of the builder pattern. Use `ShamirShare::builder()`
-    /// instead for better configurability and future-proofing.
-    ///
-    /// # Arguments
-    /// * `total_shares` - Total number of shares to create (1-255)
-    /// * `threshold` - Minimum shares required for reconstruction (1-total_shares)
-    ///
-    /// # Errors
-    /// Returns `ShamirError` if:
-    /// - `total_shares` is 0
-    /// - `threshold` is 0
-    /// - `threshold` > `total_shares`
-    ///
-    /// # Example
-    /// ```
-    /// use shamir_share::ShamirShare;
-    ///
-    /// let valid = ShamirShare::new(5, 3);
-    /// assert!(valid.is_ok());
-    ///
-    /// let invalid = ShamirShare::new(3, 5);
-    /// assert!(invalid.is_err());
-    /// ```
-    #[deprecated(since = "0.2.0", note = "Please use the builder pattern instead: ShamirShare::builder(total_shares, threshold).build()")]
-    pub fn new(total_shares: u8, threshold: u8) -> Result<Self> {
-        Self::builder(total_shares, threshold).build()
-    }
-
     /// Splits a secret into multiple shares using polynomial interpolation
     ///
     /// This method uses constant-time GF(2^8) arithmetic and cryptographically secure
@@ -266,7 +235,7 @@ impl ShamirShare {
     /// ```
     /// use shamir_share::ShamirShare;
     ///
-    /// let mut scheme = ShamirShare::new(5, 3).unwrap();
+    /// let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
     /// let shares = scheme.split(b"secret data").unwrap();
     /// assert_eq!(shares.len(), 5);
     /// ```
@@ -284,44 +253,19 @@ impl ShamirShare {
             secret.to_vec()
         };
 
-        let secret_len = data_to_split.len();
-        let t = self.threshold as usize;
-        // Bulk generate random coefficients for all secret bytes (for coefficients 1..t)
-        let mut random_data = vec![0u8; secret_len * (t - 1)];
-        self.rng.fill_bytes(&mut random_data);
+        // Use the unified split_chunk method for the core splitting logic
+        let share_data = self.split_chunk(&data_to_split)?;
 
-        // Precompute x values for each share
-        let x_values: Vec<FiniteField> = (1..=self.total_shares).map(FiniteField::new).collect();
-
-        // Evaluate the polynomial for each share in parallel. For each secret byte at index idx, the polynomial is
-        // P(x) = secret[idx] + random_coef1 * x + random_coef2 * x^2 + ... + random_coef_{t-1} * x^(t-1).
-        let shares: Vec<Share> = x_values
-            .into_par_iter()
+        // Create Share objects with metadata
+        let shares: Vec<Share> = share_data
+            .into_iter()
             .enumerate()
-            .map(|(i, x)| {
-                let data: Vec<u8> = (0..secret_len)
-                    .map(|idx| {
-                        let mut acc = FiniteField::new(0);
-                        // Evaluate polynomial using Horner's method (iterating coefficients in reverse order)
-                        for j in (0..t).rev() {
-                            let coeff = if j == 0 {
-                                FiniteField::new(data_to_split[idx])
-                            } else {
-                                // Random coefficient for x^j is stored in random_data at position idx*(t-1) + (j-1)
-                                FiniteField::new(random_data[idx * (t - 1) + (j - 1)])
-                            };
-                            acc = acc * x + coeff;
-                        }
-                        acc.0
-                    })
-                    .collect();
-                Share {
-                    index: (i + 1) as u8,
-                    data,
-                    threshold: self.threshold,
-                    total_shares: self.total_shares,
-                    integrity_check: self.config.integrity_check,
-                }
+            .map(|(i, data)| Share {
+                index: (i + 1) as u8,
+                data,
+                threshold: self.threshold,
+                total_shares: self.total_shares,
+                integrity_check: self.config.integrity_check,
             })
             .collect();
 
@@ -357,7 +301,7 @@ impl ShamirShare {
     /// ```
     /// use shamir_share::ShamirShare;
     ///
-    /// let mut scheme = ShamirShare::new(5, 3).unwrap();
+    /// let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
     /// let shares = scheme.split(b"data").unwrap();
     ///
     /// // Reconstruct with first 3 shares
@@ -377,53 +321,18 @@ impl ShamirShare {
             });
         }
 
-        let secret_len = shares[0].data.len();
         let integrity_check = shares[0].integrity_check;
-        
+
         // Ensure all shares have consistent properties
-        if !shares.iter().all(|s| s.data.len() == secret_len && s.integrity_check == integrity_check) {
+        if !shares
+            .iter()
+            .all(|s| s.data.len() == shares[0].data.len() && s.integrity_check == integrity_check)
+        {
             return Err(ShamirError::InconsistentShareLength);
         }
 
-        // Optimized computation of Lagrange coefficients
-        let xs: Vec<FiniteField> = shares
-            .iter()
-            .map(|share| FiniteField::new(share.index))
-            .collect();
-        let p = xs.iter().fold(FiniteField::new(1), |acc, &x| acc * x);
-        let lagrange_coefficients: Result<Vec<FiniteField>> = xs
-            .iter()
-            .enumerate()
-            .map(|(i, &x_i)| {
-                // Since x_i != 0, division by x_i is safe via multiplication by its inverse
-                let numerator = p * x_i.inverse().unwrap();
-                let mut denominator = FiniteField::new(1);
-                for (j, &x_j) in xs.iter().enumerate() {
-                    if i != j {
-                        denominator = denominator * (x_i + x_j);
-                    }
-                }
-                denominator
-                    .inverse()
-                    .ok_or(ShamirError::InvalidShareFormat)
-                    .map(|inv| numerator * inv)
-            })
-            .collect();
-        let lagrange_coefficients = lagrange_coefficients?;
-
-        // Parallelize across bytes
-        let reconstructed_data = (0..secret_len)
-            .into_par_iter()
-            .map(|byte_idx| {
-                shares
-                    .iter()
-                    .zip(&lagrange_coefficients)
-                    .fold(FiniteField::new(0), |acc, (share, &coeff)| {
-                        acc + coeff * FiniteField::new(share.data[byte_idx])
-                    })
-                    .0
-            })
-            .collect::<Vec<u8>>();
+        // Use the unified reconstruct_chunk method for the core reconstruction logic
+        let reconstructed_data = Self::reconstruct_chunk(shares)?;
 
         // Handle integrity checking based on share configuration
         if integrity_check {
@@ -515,7 +424,11 @@ impl ShamirShare {
         }
 
         // Write integrity check flag and share index to all destinations as a header
-        let integrity_flag = if self.config.integrity_check { 1u8 } else { 0u8 };
+        let integrity_flag = if self.config.integrity_check {
+            1u8
+        } else {
+            0u8
+        };
         for (i, dest) in destinations.iter_mut().enumerate() {
             dest.write_all(&[integrity_flag])
                 .map_err(ShamirError::IoError)?;
@@ -524,86 +437,58 @@ impl ShamirShare {
         }
 
         let chunk_size = self.config.chunk_size;
-        
+
         // Reuse buffers to avoid allocations in the hot loop
-        let mut source_buffer = vec![0u8; chunk_size];
-        let mut data_to_split_buffer = Vec::with_capacity(
-            if self.config.integrity_check { 
-                HASH_SIZE + chunk_size 
-            } else { 
-                chunk_size 
-            }
-        );
-        
-        // Pre-allocate buffers for polynomial evaluation to avoid allocations per chunk
-        let secret_len_max = if self.config.integrity_check { 
-            HASH_SIZE + chunk_size 
-        } else { 
-            chunk_size 
-        };
-        let t = self.threshold as usize;
-        let mut random_data_buffer = vec![0u8; secret_len_max * (t - 1)];
-        
-        // Pre-allocate x_values once since they never change
-        let x_values: Vec<FiniteField> = (1..=self.total_shares).map(FiniteField::new).collect();
-        
+        let mut chunk_read_buffer = vec![0u8; chunk_size];
+        let mut chunk_with_hash_buffer = Vec::with_capacity(if self.config.integrity_check {
+            HASH_SIZE + chunk_size
+        } else {
+            chunk_size
+        });
+
         // Pre-allocate share data buffers to reuse across chunks
+        let max_chunk_size_with_hash = if self.config.integrity_check {
+            HASH_SIZE + chunk_size
+        } else {
+            chunk_size
+        };
         let mut share_data_buffers: Vec<Vec<u8>> = (0..self.total_shares)
-            .map(|_| Vec::with_capacity(secret_len_max))
+            .map(|_| Vec::with_capacity(max_chunk_size_with_hash))
             .collect();
 
         loop {
             // Read a chunk from the source
-            let bytes_read = source.read(&mut source_buffer).map_err(ShamirError::IoError)?;
+            let bytes_read = source
+                .read(&mut chunk_read_buffer)
+                .map_err(ShamirError::IoError)?;
             if bytes_read == 0 {
                 break; // EOF reached
             }
 
             // Process only the bytes that were actually read
-            let chunk = &source_buffer[..bytes_read];
+            let chunk = &chunk_read_buffer[..bytes_read];
 
             // Prepare data for splitting (with or without integrity check)
             // Reuse buffer to avoid allocations in the hot loop
-            data_to_split_buffer.clear();
+            chunk_with_hash_buffer.clear();
             if self.config.integrity_check {
-                // Calculate hash of the chunk and prepend it
+                // Calculate hash of the chunk and prepend it for integrity verification
                 let hash = Sha256::digest(chunk);
-                data_to_split_buffer.extend_from_slice(&hash);
-                data_to_split_buffer.extend_from_slice(chunk);
+                chunk_with_hash_buffer.extend_from_slice(&hash);
+                chunk_with_hash_buffer.extend_from_slice(chunk);
             } else {
                 // Use chunk data directly without integrity hash
-                data_to_split_buffer.extend_from_slice(chunk);
+                chunk_with_hash_buffer.extend_from_slice(chunk);
             };
 
-            // Split the chunk using optimized logic with buffer reuse
-            let secret_len = data_to_split_buffer.len();
-            
-            // Reuse random data buffer, only resize if needed
-            let random_data_needed = secret_len * (t - 1);
-            if random_data_buffer.len() < random_data_needed {
-                random_data_buffer.resize(random_data_needed, 0);
-            }
-            self.rng.fill_bytes(&mut random_data_buffer[..random_data_needed]);
+            // Split the chunk using the unified split_chunk method
+            let chunk_share_data = self.split_chunk(&chunk_with_hash_buffer)?;
 
-            // Evaluate the polynomial for each share, reusing share data buffers
-            for (share_idx, &x) in x_values.iter().enumerate() {
+            // Copy the results into our reusable buffers for writing
+            for (share_idx, chunk_data) in chunk_share_data.iter().enumerate() {
                 let share_buffer = &mut share_data_buffers[share_idx];
                 share_buffer.clear();
-                share_buffer.reserve(secret_len);
-                
-                for byte_idx in 0..secret_len {
-                    let mut acc = FiniteField::new(0);
-                    // Evaluate polynomial using Horner's method
-                    for j in (0..t).rev() {
-                        let coeff = if j == 0 {
-                            FiniteField::new(data_to_split_buffer[byte_idx])
-                        } else {
-                            FiniteField::new(random_data_buffer[byte_idx * (t - 1) + (j - 1)])
-                        };
-                        acc = acc * x + coeff;
-                    }
-                    share_buffer.push(acc.0);
-                }
+                share_buffer.extend_from_slice(chunk_data);
             }
 
             // Write each share to its corresponding destination with length prefix
@@ -704,7 +589,7 @@ impl ShamirShare {
         let integrity_check = integrity_flag[0] != 0;
 
         let mut share_indices = Vec::with_capacity(sources.len());
-        
+
         // Read share index from first source
         let mut share_index = [0u8; 1];
         sources[0]
@@ -721,24 +606,25 @@ impl ShamirShare {
                     "Inconsistent integrity check flags across sources".to_string(),
                 ));
             }
-            
+
             let mut index = [0u8; 1];
-            source.read_exact(&mut index).map_err(ShamirError::IoError)?;
+            source
+                .read_exact(&mut index)
+                .map_err(ShamirError::IoError)?;
             share_indices.push(index[0]);
         }
 
         // Pre-allocate buffers to reuse across chunks to avoid allocations in hot loop
-        let mut lengths_buffer = Vec::with_capacity(sources.len());
-        let mut share_data_buffers: Vec<Vec<u8>> = (0..sources.len())
-            .map(|_| Vec::new())
-            .collect();
-        let mut temp_shares_buffer: Vec<Share> = Vec::with_capacity(sources.len());
-        let mut chunk_data_buffer = Vec::new();
+        let mut chunk_lengths_buffer = Vec::with_capacity(sources.len());
+        let mut share_chunk_data_buffers: Vec<Vec<u8>> =
+            (0..sources.len()).map(|_| Vec::new()).collect();
+        let mut temp_shares_for_reconstruction: Vec<Share> = Vec::with_capacity(sources.len());
+        let mut reconstructed_chunk_buffer = Vec::new();
 
         loop {
             // Read length prefixes from all sources
             // Reuse buffer to avoid allocations in the hot loop
-            lengths_buffer.clear();
+            chunk_lengths_buffer.clear();
             let mut eof_reached = false;
 
             for source in sources.iter_mut() {
@@ -746,7 +632,7 @@ impl ShamirShare {
                 match source.read_exact(&mut length_bytes) {
                     Ok(()) => {
                         let length = u32::from_le_bytes(length_bytes) as usize;
-                        lengths_buffer.push(length);
+                        chunk_lengths_buffer.push(length);
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                         eof_reached = true;
@@ -763,29 +649,29 @@ impl ShamirShare {
             // Read share data from all sources
             // Reuse buffers to avoid allocations in the hot loop
             for (i, source) in sources.iter_mut().enumerate() {
-                let share_buffer = &mut share_data_buffers[i];
-                let length = lengths_buffer[i];
-                
+                let share_chunk_buffer = &mut share_chunk_data_buffers[i];
+                let chunk_length = chunk_lengths_buffer[i];
+
                 // Resize buffer only if needed to avoid unnecessary allocations
-                if share_buffer.len() != length {
-                    share_buffer.resize(length, 0);
+                if share_chunk_buffer.len() != chunk_length {
+                    share_chunk_buffer.resize(chunk_length, 0);
                 }
-                
+
                 source
-                    .read_exact(share_buffer)
+                    .read_exact(share_chunk_buffer)
                     .map_err(ShamirError::IoError)?;
             }
 
             // Create temporary Share objects for reconstruction
             // Reuse buffer to avoid allocations in the hot loop
-            temp_shares_buffer.clear();
+            temp_shares_for_reconstruction.clear();
             let threshold = sources.len() as u8;
             let total_shares = sources.len() as u8;
-            
-            for (i, share_data) in share_data_buffers.iter().enumerate() {
-                temp_shares_buffer.push(Share {
-                    index: share_indices[i], // Use the actual share index from the stream
-                    data: share_data.clone(), // Unfortunately we need to clone here for the Share struct
+
+            for (i, share_chunk_data) in share_chunk_data_buffers.iter().enumerate() {
+                temp_shares_for_reconstruction.push(Share {
+                    index: share_indices[i],        // Use the actual share index from the stream
+                    data: share_chunk_data.clone(), // Unfortunately we need to clone here for the Share struct
                     threshold,
                     total_shares,
                     integrity_check,
@@ -793,7 +679,10 @@ impl ShamirShare {
             }
 
             // Reconstruct the chunk using optimized reconstruction with buffer reuse
-            let reconstructed_chunk = Self::reconstruct_chunk_optimized(&temp_shares_buffer, &mut chunk_data_buffer)?;
+            let reconstructed_chunk = Self::reconstruct_chunk_optimized(
+                &temp_shares_for_reconstruction,
+                &mut reconstructed_chunk_buffer,
+            )?;
 
             // Handle integrity checking based on the flag we read
             if integrity_check {
@@ -806,7 +695,11 @@ impl ShamirShare {
                 // Verify the integrity of the data using constant-time comparison
                 let calculated_hash = Sha256::digest(data);
                 let mut hash_match = 0u8;
-                for (a, b) in calculated_hash.as_slice().iter().zip(reconstructed_hash.iter()) {
+                for (a, b) in calculated_hash
+                    .as_slice()
+                    .iter()
+                    .zip(reconstructed_hash.iter())
+                {
                     hash_match |= a ^ b;
                 }
                 if hash_match != 0 {
@@ -814,9 +707,7 @@ impl ShamirShare {
                 }
 
                 // Write only the data part (without hash) to destination
-                destination
-                    .write_all(data)
-                    .map_err(ShamirError::IoError)?;
+                destination.write_all(data).map_err(ShamirError::IoError)?;
             } else {
                 // No integrity checking - write data directly
                 destination
@@ -831,13 +722,28 @@ impl ShamirShare {
         Ok(())
     }
 
-    /// Helper method to split a single chunk of data
+    /// Helper method to split a single chunk of data into share data
     ///
-    /// This is used internally by both `split` and `split_stream` methods.
+    /// This is the canonical implementation for splitting data using Shamir's Secret Sharing.
+    /// It takes a data chunk and returns the raw share data for each share.
+    /// Used internally by both `split` and `split_stream` methods to ensure consistency.
+    ///
+    /// # Arguments
+    /// * `data` - The data chunk to split
+    ///
+    /// # Returns
+    /// A vector where each element contains the share data for one share.
+    /// The outer vector index corresponds to the share number (0-based).
+    ///
+    /// # Security
+    /// - Uses cryptographically secure random coefficients
+    /// - Constant-time polynomial evaluation
+    /// - Parallel processing for performance while maintaining security
+    #[inline]
     fn split_chunk(&mut self, data: &[u8]) -> Result<Vec<Vec<u8>>> {
         let secret_len = data.len();
         let t = self.threshold as usize;
-        
+
         // Bulk generate random coefficients for all secret bytes (for coefficients 1..t)
         let mut random_data = vec![0u8; secret_len * (t - 1)];
         self.rng.fill_bytes(&mut random_data);
@@ -845,18 +751,21 @@ impl ShamirShare {
         // Precompute x values for each share
         let x_values: Vec<FiniteField> = (1..=self.total_shares).map(FiniteField::new).collect();
 
-        // Evaluate the polynomial for each share
+        // Evaluate the polynomial for each share in parallel
+        // For each secret byte at index idx, the polynomial is:
+        // P(x) = data[idx] + random_coef1 * x + random_coef2 * x^2 + ... + random_coef_{t-1} * x^(t-1)
         let share_data: Vec<Vec<u8>> = x_values
-            .into_iter()
+            .into_par_iter()
             .map(|x| {
                 (0..secret_len)
                     .map(|idx| {
                         let mut acc = FiniteField::new(0);
-                        // Evaluate polynomial using Horner's method
+                        // Evaluate polynomial using Horner's method (iterating coefficients in reverse order)
                         for j in (0..t).rev() {
                             let coeff = if j == 0 {
                                 FiniteField::new(data[idx])
                             } else {
+                                // Random coefficient for x^j is stored in random_data at position idx*(t-1) + (j-1)
                                 FiniteField::new(random_data[idx * (t - 1) + (j - 1)])
                             };
                             acc = acc * x + coeff;
@@ -870,31 +779,42 @@ impl ShamirShare {
         Ok(share_data)
     }
 
-    /// Helper method to reconstruct a single chunk from shares
+    /// Helper method to compute Lagrange coefficients for reconstruction
     ///
-    /// This is used internally by both `reconstruct` and `reconstruct_stream` methods.
-    fn reconstruct_chunk(shares: &[Share]) -> Result<Vec<u8>> {
-        if shares.is_empty() {
-            return Err(ShamirError::InsufficientShares { needed: 1, got: 0 });
-        }
-
-        let secret_len = shares[0].data.len();
-        
-        // Ensure all shares have consistent length
-        if !shares.iter().all(|s| s.data.len() == secret_len) {
-            return Err(ShamirError::InconsistentShareLength);
-        }
-
-        // Optimized computation of Lagrange coefficients
+    /// This is the shared implementation for computing Lagrange interpolation coefficients.
+    /// Used by both reconstruction helper methods to ensure consistency and reduce code duplication.
+    ///
+    /// # Arguments
+    /// * `shares` - Slice of shares to compute coefficients for
+    ///
+    /// # Returns
+    /// Vector of Lagrange coefficients for each share
+    ///
+    /// # Security
+    /// - Constant-time coefficient computation
+    /// - Validates share indices for uniqueness
+    #[inline]
+    fn compute_lagrange_coefficients(shares: &[Share]) -> Result<Vec<FiniteField>> {
         let xs: Vec<FiniteField> = shares
             .iter()
             .map(|share| FiniteField::new(share.index))
             .collect();
+
+        // Check for duplicate share indices
+        for i in 0..xs.len() {
+            for j in (i + 1)..xs.len() {
+                if xs[i] == xs[j] {
+                    return Err(ShamirError::InvalidShareFormat);
+                }
+            }
+        }
+
         let p = xs.iter().fold(FiniteField::new(1), |acc, &x| acc * x);
         let lagrange_coefficients: Result<Vec<FiniteField>> = xs
             .iter()
             .enumerate()
             .map(|(i, &x_i)| {
+                // Since x_i != 0, division by x_i is safe via multiplication by its inverse
                 let numerator = p * x_i.inverse().unwrap();
                 let mut denominator = FiniteField::new(1);
                 for (j, &x_j) in xs.iter().enumerate() {
@@ -908,10 +828,45 @@ impl ShamirShare {
                     .map(|inv| numerator * inv)
             })
             .collect();
-        let lagrange_coefficients = lagrange_coefficients?;
 
-        // Reconstruct each byte
+        lagrange_coefficients
+    }
+
+    /// Helper method to reconstruct data from shares using Lagrange interpolation
+    ///
+    /// This is the canonical implementation for reconstructing data using Shamir's Secret Sharing.
+    /// It takes a slice of shares and returns the reconstructed data.
+    /// Used internally by both `reconstruct` and `reconstruct_stream` methods to ensure consistency.
+    ///
+    /// # Arguments
+    /// * `shares` - Slice of shares to use for reconstruction
+    ///
+    /// # Returns
+    /// The reconstructed data (may include integrity hash if shares were created with integrity checking)
+    ///
+    /// # Security
+    /// - Constant-time Lagrange interpolation
+    /// - Parallel processing for performance while maintaining security
+    /// - Validates share consistency before processing
+    #[inline]
+    fn reconstruct_chunk(shares: &[Share]) -> Result<Vec<u8>> {
+        if shares.is_empty() {
+            return Err(ShamirError::InsufficientShares { needed: 1, got: 0 });
+        }
+
+        let secret_len = shares[0].data.len();
+
+        // Ensure all shares have consistent length
+        if !shares.iter().all(|s| s.data.len() == secret_len) {
+            return Err(ShamirError::InconsistentShareLength);
+        }
+
+        // Use shared Lagrange coefficient computation
+        let lagrange_coefficients = Self::compute_lagrange_coefficients(shares)?;
+
+        // Parallelize reconstruction across bytes for performance
         let reconstructed_data = (0..secret_len)
+            .into_par_iter()
             .map(|byte_idx| {
                 shares
                     .iter()
@@ -930,42 +885,32 @@ impl ShamirShare {
     ///
     /// This version reuses a provided buffer to avoid allocations in hot paths.
     /// Used internally by `reconstruct_stream` for performance optimization.
-    fn reconstruct_chunk_optimized<'a>(shares: &[Share], output_buffer: &'a mut Vec<u8>) -> Result<&'a [u8]> {
+    /// Shares the same core logic as `reconstruct_chunk` but optimizes for memory allocation.
+    ///
+    /// # Arguments
+    /// * `shares` - Slice of shares to use for reconstruction
+    /// * `output_buffer` - Reusable buffer for the reconstructed data
+    ///
+    /// # Returns
+    /// Slice reference to the reconstructed data in the output buffer
+    #[inline]
+    fn reconstruct_chunk_optimized<'a>(
+        shares: &[Share],
+        output_buffer: &'a mut Vec<u8>,
+    ) -> Result<&'a [u8]> {
         if shares.is_empty() {
             return Err(ShamirError::InsufficientShares { needed: 1, got: 0 });
         }
 
         let secret_len = shares[0].data.len();
-        
+
         // Ensure all shares have consistent length
         if !shares.iter().all(|s| s.data.len() == secret_len) {
             return Err(ShamirError::InconsistentShareLength);
         }
 
-        // Optimized computation of Lagrange coefficients
-        let xs: Vec<FiniteField> = shares
-            .iter()
-            .map(|share| FiniteField::new(share.index))
-            .collect();
-        let p = xs.iter().fold(FiniteField::new(1), |acc, &x| acc * x);
-        let lagrange_coefficients: Result<Vec<FiniteField>> = xs
-            .iter()
-            .enumerate()
-            .map(|(i, &x_i)| {
-                let numerator = p * x_i.inverse().unwrap();
-                let mut denominator = FiniteField::new(1);
-                for (j, &x_j) in xs.iter().enumerate() {
-                    if i != j {
-                        denominator = denominator * (x_i + x_j);
-                    }
-                }
-                denominator
-                    .inverse()
-                    .ok_or(ShamirError::InvalidShareFormat)
-                    .map(|inv| numerator * inv)
-            })
-            .collect();
-        let lagrange_coefficients = lagrange_coefficients?;
+        // Use shared Lagrange coefficient computation
+        let lagrange_coefficients = Self::compute_lagrange_coefficients(shares)?;
 
         // Reuse output buffer to avoid allocations in the hot loop
         output_buffer.clear();
@@ -994,7 +939,7 @@ mod tests {
     #[test]
     fn test_split_and_reconstruct() {
         let secret = b"Hello, World!";
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
 
         // Split the secret
         let shares = shamir.split(secret).unwrap();
@@ -1011,15 +956,15 @@ mod tests {
 
     #[test]
     fn test_invalid_parameters() {
-        assert!(ShamirShare::new(0, 1).is_err());
-        assert!(ShamirShare::new(1, 0).is_err());
-        assert!(ShamirShare::new(3, 4).is_err());
+        assert!(ShamirShare::builder(0, 1).build().is_err());
+        assert!(ShamirShare::builder(1, 0).build().is_err());
+        assert!(ShamirShare::builder(3, 4).build().is_err());
     }
 
     #[test]
     fn test_insufficient_shares() {
         let secret = b"Test";
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(secret).unwrap();
 
         assert!(ShamirShare::reconstruct(&shares[0..2]).is_err());
@@ -1028,7 +973,7 @@ mod tests {
     #[test]
     fn test_different_share_combinations() {
         let secret = b"Different combinations test";
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(secret).unwrap();
 
         // Try different combinations of 3 shares
@@ -1045,7 +990,7 @@ mod tests {
     #[test]
     fn test_empty_secret() {
         let secret = b"";
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(secret).unwrap();
         let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
         assert_eq!(reconstructed, secret);
@@ -1054,7 +999,7 @@ mod tests {
     #[test]
     fn test_single_byte_secret() {
         let secret = b"x";
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(secret).unwrap();
         let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
         assert_eq!(reconstructed, secret);
@@ -1063,7 +1008,7 @@ mod tests {
     #[test]
     fn test_max_shares() {
         let secret = b"Maximum shares test";
-        let mut shamir = ShamirShare::new(255, 128).unwrap();
+        let mut shamir = ShamirShare::builder(255, 128).build().unwrap();
         let shares = shamir.split(secret).unwrap();
         assert_eq!(shares.len(), 255);
 
@@ -1073,7 +1018,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_share_indices() {
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(b"test").unwrap();
 
         let mut corrupted_shares = shares[0..3].to_vec();
@@ -1087,7 +1032,7 @@ mod tests {
 
     #[test]
     fn test_corrupted_share_data() {
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
         let mut shares = shamir.split(b"test").unwrap();
 
         // Corrupt one byte in a share
@@ -1155,10 +1100,13 @@ mod tests {
         // Data should be smaller since no hash is prepended
         let mut shamir_with_integrity = ShamirShare::builder(5, 3).build().unwrap();
         let shares_with_integrity = shamir_with_integrity.split(secret).unwrap();
-        
+
         // Shares without integrity check should be smaller
         assert!(shares[0].data.len() < shares_with_integrity[0].data.len());
-        assert_eq!(shares_with_integrity[0].data.len() - shares[0].data.len(), HASH_SIZE);
+        assert_eq!(
+            shares_with_integrity[0].data.len() - shares[0].data.len(),
+            HASH_SIZE
+        );
     }
 
     #[test]
@@ -1227,25 +1175,12 @@ mod tests {
     }
 
     #[test]
-    fn test_deprecated_new_method() {
-        // Test that deprecated new method still works
-        #[allow(deprecated)]
-        let mut shamir = ShamirShare::new(5, 3).unwrap();
-        let secret = b"test with deprecated method";
-        let shares = shamir.split(secret).unwrap();
-        let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
-        assert_eq!(&reconstructed, secret);
-
-        // Should use default config (integrity_check = true)
-        assert!(shares[0].integrity_check);
-    }
-
-    #[test]
     fn test_config_builder_methods() {
         use crate::config::SplitMode;
 
         let config = Config::new()
-            .with_chunk_size(2048).unwrap()
+            .with_chunk_size(2048)
+            .unwrap()
             .with_mode(SplitMode::Parallel)
             .with_compression(true)
             .with_integrity_check(false);
@@ -1268,7 +1203,7 @@ mod tests {
         let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
         let data = b"This is a test message for streaming functionality";
         let mut source = Cursor::new(data);
-        
+
         // Create destination buffers
         let mut destinations = vec![Vec::new(); 3];
         let mut dest_cursors: Vec<Cursor<Vec<u8>>> = destinations
@@ -1315,7 +1250,7 @@ mod tests {
 
         let data = b"This is a longer test message that will be split into multiple chunks";
         let mut source = Cursor::new(data);
-        
+
         let mut destinations = vec![Vec::new(); 3];
         let mut dest_cursors: Vec<Cursor<Vec<u8>>> = destinations
             .iter_mut()
@@ -1348,7 +1283,8 @@ mod tests {
 
         let config = Config::new()
             .with_integrity_check(false)
-            .with_chunk_size(20).unwrap();
+            .with_chunk_size(20)
+            .unwrap();
         let mut shamir = ShamirShare::builder(3, 2)
             .with_config(config)
             .build()
@@ -1356,7 +1292,7 @@ mod tests {
 
         let data = b"Test message without integrity checking";
         let mut source = Cursor::new(data);
-        
+
         let mut destinations = vec![Vec::new(); 3];
         let mut dest_cursors: Vec<Cursor<Vec<u8>>> = destinations
             .iter_mut()
@@ -1390,7 +1326,7 @@ mod tests {
         let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
         let data = b"";
         let mut source = Cursor::new(data);
-        
+
         let mut destinations = vec![Vec::new(); 3];
         let mut dest_cursors: Vec<Cursor<Vec<u8>>> = destinations
             .iter_mut()
@@ -1429,7 +1365,7 @@ mod tests {
         let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
         let data = b"test";
         let mut source = Cursor::new(data);
-        
+
         // Wrong number of destinations (2 instead of 3)
         let mut destinations = vec![Vec::new(); 2];
         let mut dest_cursors: Vec<Cursor<Vec<u8>>> = destinations
@@ -1450,7 +1386,10 @@ mod tests {
         let mut dest_cursor = Cursor::new(&mut destination);
 
         let result = ShamirShare::reconstruct_stream(&mut sources, &mut dest_cursor);
-        assert!(matches!(result, Err(ShamirError::InsufficientShares { .. })));
+        assert!(matches!(
+            result,
+            Err(ShamirError::InsufficientShares { .. })
+        ));
     }
 
     #[test]
@@ -1465,7 +1404,7 @@ mod tests {
 
         let data = b"Hello World!"; // 12 bytes, will create 3 chunks (5, 5, 2)
         let mut source = Cursor::new(data);
-        
+
         let mut destinations = vec![Vec::new(); 3];
         let mut dest_cursors: Vec<Cursor<Vec<u8>>> = destinations
             .iter_mut()
@@ -1483,11 +1422,11 @@ mod tests {
         for share in &share_data {
             let mut cursor = Cursor::new(share);
             let mut total_chunks = 0;
-            
+
             // Skip header (integrity flag + share index)
             let mut header = [0u8; 2];
             cursor.read_exact(&mut header).unwrap();
-            
+
             // Read chunks until EOF
             loop {
                 let mut length_bytes = [0u8; 4];
@@ -1502,7 +1441,7 @@ mod tests {
                     Err(e) => panic!("Unexpected error: {}", e),
                 }
             }
-            
+
             // Should have 3 chunks (5 + 5 + 2 bytes)
             assert_eq!(total_chunks, 3);
         }
@@ -1527,7 +1466,8 @@ mod tests {
         // Test with integrity check enabled
         let config_with_integrity = Config::new()
             .with_integrity_check(true)
-            .with_chunk_size(10).unwrap();
+            .with_chunk_size(10)
+            .unwrap();
         let mut shamir_with_integrity = ShamirShare::builder(3, 2)
             .with_config(config_with_integrity)
             .build()
@@ -1536,7 +1476,8 @@ mod tests {
         // Test with integrity check disabled
         let config_without_integrity = Config::new()
             .with_integrity_check(false)
-            .with_chunk_size(10).unwrap();
+            .with_chunk_size(10)
+            .unwrap();
         let mut shamir_without_integrity = ShamirShare::builder(3, 2)
             .with_config(config_without_integrity)
             .build()
@@ -1551,7 +1492,9 @@ mod tests {
             .iter_mut()
             .map(|d| Cursor::new(std::mem::take(d)))
             .collect();
-        shamir_with_integrity.split_stream(&mut source1, &mut dest_cursors1).unwrap();
+        shamir_with_integrity
+            .split_stream(&mut source1, &mut dest_cursors1)
+            .unwrap();
         let share_data_with_integrity: Vec<Vec<u8>> = dest_cursors1
             .into_iter()
             .map(|cursor| cursor.into_inner())
@@ -1564,7 +1507,9 @@ mod tests {
             .iter_mut()
             .map(|d| Cursor::new(std::mem::take(d)))
             .collect();
-        shamir_without_integrity.split_stream(&mut source2, &mut dest_cursors2).unwrap();
+        shamir_without_integrity
+            .split_stream(&mut source2, &mut dest_cursors2)
+            .unwrap();
         let share_data_without_integrity: Vec<Vec<u8>> = dest_cursors2
             .into_iter()
             .map(|cursor| cursor.into_inner())
@@ -1607,7 +1552,7 @@ mod tests {
         // Create a large test dataset
         let data: Vec<u8> = (0..10000).map(|i| (i % 256) as u8).collect();
         let mut source = Cursor::new(&data);
-        
+
         let mut destinations = vec![Vec::new(); 5];
         let mut dest_cursors: Vec<Cursor<Vec<u8>>> = destinations
             .iter_mut()
