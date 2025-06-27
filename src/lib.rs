@@ -13,6 +13,7 @@
 //!
 //! # Quick Start
 //!
+//! ## Basic Usage
 //! ```
 //! use shamir_share::{ShamirShare, FileShareStore, ShareStore};
 //!
@@ -39,6 +40,26 @@
 //! let reconstructed = ShamirShare::reconstruct(&loaded_shares).unwrap();
 //! assert_eq!(reconstructed, secret);
 //! ```
+//!
+//! ## Lazy Share Generation with Dealer
+//! ```
+//! use shamir_share::ShamirShare;
+//!
+//! let mut scheme = ShamirShare::builder(10, 5).build().unwrap();
+//! let secret = b"my secret data";
+//!
+//! // Generate only the shares you need
+//! let shares: Vec<_> = scheme.dealer(secret).take(5).collect();
+//!
+//! // Or use iterator methods for advanced filtering
+//! let even_shares: Vec<_> = scheme.dealer(secret)
+//!     .filter(|share| share.index % 2 == 0)
+//!     .take(5)
+//!     .collect();
+//!
+//! let reconstructed = ShamirShare::reconstruct(&shares).unwrap();
+//! assert_eq!(reconstructed, secret);
+//! ```
 
 mod config;
 mod error;
@@ -49,14 +70,14 @@ mod storage;
 pub use config::{Config, SplitMode};
 pub use error::{Result, ShamirError};
 pub use finite_field::FiniteField;
-pub use shamir::{ShamirShare, ShamirShareBuilder, Share};
+pub use shamir::{Dealer, ShamirShare, ShamirShareBuilder, Share};
 pub use storage::{FileShareStore, ShareStore};
 
 // Re-export common types for convenience
 pub mod prelude {
     pub use super::{
-        Config, FileShareStore, Result, ShamirError, ShamirShare, ShamirShareBuilder, Share,
-        ShareStore, SplitMode,
+        Config, Dealer, FileShareStore, Result, ShamirError, ShamirShare, ShamirShareBuilder,
+        Share, ShareStore, SplitMode,
     };
 }
 

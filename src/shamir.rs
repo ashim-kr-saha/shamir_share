@@ -35,7 +35,7 @@ const HASH_SIZE: usize = 32; // SHA-256 output size
 /// assert_eq!(share.threshold, 3);
 /// assert_eq!(share.total_shares, 5);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Share {
     /// Index of the share (x-coordinate in the polynomial)
     pub index: u8,
@@ -47,6 +47,49 @@ pub struct Share {
     pub total_shares: u8,
     /// Whether integrity checking was enabled when this share was created
     pub integrity_check: bool,
+}
+
+/// Lazy iterator for generating shares using Shamir's Secret Sharing
+///
+/// The `Dealer` provides a memory-efficient way to generate shares on-demand without
+/// storing all shares in memory at once. It pre-computes the polynomial coefficients
+/// and evaluates them lazily for each requested share.
+///
+/// # Security
+///
+/// - Polynomial coefficients are generated once using cryptographically secure randomness
+/// - Each share evaluation uses constant-time GF(2^8) arithmetic
+/// - Maximum of 255 shares can be generated (GF(256) field limitation)
+///
+/// # Example
+/// ```
+/// use shamir_share::ShamirShare;
+///
+/// let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+/// let secret = b"secret data";
+///
+/// // Generate shares lazily
+/// let shares: Vec<_> = shamir.dealer(secret).take(3).collect();
+/// assert_eq!(shares.len(), 3);
+///
+/// // Reconstruct
+/// let reconstructed = ShamirShare::reconstruct(&shares).unwrap();
+/// assert_eq!(reconstructed, secret);
+/// ```
+pub struct Dealer {
+    /// The data to be split (with integrity hash if enabled)
+    data: Vec<u8>,
+    /// Pre-computed random polynomial coefficients for all bytes
+    /// Layout: [byte0_coeff1, byte0_coeff2, ..., byte1_coeff1, byte1_coeff2, ...]
+    coefficients: Vec<u8>,
+    /// Current share index (x-coordinate), starts at 1
+    current_x: u8,
+    /// Threshold for reconstruction
+    threshold: u8,
+    /// Total shares configured
+    total_shares: u8,
+    /// Whether integrity checking is enabled
+    integrity_check: bool,
 }
 
 /// Main implementation of Shamir's Secret Sharing scheme
@@ -214,6 +257,72 @@ impl ShamirShare {
         ShamirShareBuilder::new(total_shares, threshold)
     }
 
+    /// Creates a lazy iterator for generating shares on-demand
+    ///
+    /// This method provides a memory-efficient way to generate shares without storing
+    /// all of them in memory at once. The dealer pre-computes polynomial coefficients
+    /// and evaluates them lazily for each requested share.
+    ///
+    /// # Arguments
+    /// * `secret` - Byte slice to protect
+    ///
+    /// # Returns
+    /// A [`Dealer`] iterator that yields [`Share`] objects on demand
+    ///
+    /// # Security
+    /// - Uses ChaCha20Rng for generating polynomial coefficients
+    /// - All operations are constant-time to prevent side-channel attacks
+    /// - SHA-256 integrity hash is included if `config.integrity_check` is true
+    /// - Maximum of 255 shares can be generated (GF(256) field limitation)
+    ///
+    /// # Example
+    /// ```
+    /// use shamir_share::ShamirShare;
+    ///
+    /// let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+    /// let secret = b"secret data";
+    ///
+    /// // Generate only the shares you need
+    /// let shares: Vec<_> = scheme.dealer(secret).take(3).collect();
+    /// assert_eq!(shares.len(), 3);
+    ///
+    /// // Or iterate through all shares
+    /// for (i, share) in scheme.dealer(secret).enumerate() {
+    ///     println!("Share {}: {:?}", i + 1, share);
+    ///     if i >= 2 { break; } // Stop after 3 shares
+    /// }
+    /// ```
+    pub fn dealer(&mut self, secret: &[u8]) -> Dealer {
+        // Prepare data to split based on integrity check configuration
+        let data_to_split = if self.config.integrity_check {
+            // Calculate hash of the secret and prepend it
+            let hash = Sha256::digest(secret);
+            let mut data = Vec::with_capacity(HASH_SIZE + secret.len());
+            data.extend_from_slice(&hash);
+            data.extend_from_slice(secret);
+            data
+        } else {
+            // Use secret data directly without integrity hash
+            secret.to_vec()
+        };
+
+        let secret_len = data_to_split.len();
+        let t = self.threshold as usize;
+
+        // Pre-compute all random polynomial coefficients (for coefficients 1..t)
+        let mut coefficients = vec![0u8; secret_len * (t - 1)];
+        self.rng.fill_bytes(&mut coefficients);
+
+        Dealer {
+            data: data_to_split,
+            coefficients,
+            current_x: 1,
+            threshold: self.threshold,
+            total_shares: self.total_shares,
+            integrity_check: self.config.integrity_check,
+        }
+    }
+
     /// Splits a secret into multiple shares using polynomial interpolation
     ///
     /// This method uses constant-time GF(2^8) arithmetic and cryptographically secure
@@ -240,36 +349,11 @@ impl ShamirShare {
     /// assert_eq!(shares.len(), 5);
     /// ```
     pub fn split(&mut self, secret: &[u8]) -> Result<Vec<Share>> {
-        // Prepare data to split based on integrity check configuration
-        let data_to_split = if self.config.integrity_check {
-            // Calculate hash of the secret and prepend it
-            let hash = Sha256::digest(secret);
-            let mut data = Vec::with_capacity(HASH_SIZE + secret.len());
-            data.extend_from_slice(&hash);
-            data.extend_from_slice(secret);
-            data
-        } else {
-            // Use secret data directly without integrity hash
-            secret.to_vec()
-        };
-
-        // Use the unified split_chunk method for the core splitting logic
-        let share_data = self.split_chunk(&data_to_split)?;
-
-        // Create Share objects with metadata
-        let shares: Vec<Share> = share_data
-            .into_iter()
-            .enumerate()
-            .map(|(i, data)| Share {
-                index: (i + 1) as u8,
-                data,
-                threshold: self.threshold,
-                total_shares: self.total_shares,
-                integrity_check: self.config.integrity_check,
-            })
-            .collect();
-
-        Ok(shares)
+        // Use the new dealer for backward compatibility
+        Ok(self
+            .dealer(secret)
+            .take(self.total_shares as usize)
+            .collect())
     }
 
     /// Reconstructs the original secret from shares using Lagrange interpolation
@@ -932,6 +1016,84 @@ impl ShamirShare {
     }
 }
 
+impl Iterator for Dealer {
+    type Item = Share;
+
+    /// Generates the next share by evaluating the polynomial at the current x-coordinate
+    ///
+    /// This method uses constant-time polynomial evaluation with Horner's method to compute
+    /// the share data. It automatically stops after 255 shares (GF(256) field limitation).
+    ///
+    /// # Returns
+    /// - `Some(Share)` - The next share in the sequence
+    /// - `None` - When all possible shares have been generated (x > 255)
+    ///
+    /// # Security
+    /// - Constant-time polynomial evaluation using Horner's method
+    /// - No data-dependent branching or memory access patterns
+    fn next(&mut self) -> Option<Self::Item> {
+        // Stop after 255 shares (GF(256) field limitation - x=0 is not used)
+        if self.current_x == 0 {
+            return None;
+        }
+
+        let x = FiniteField::new(self.current_x);
+        let secret_len = self.data.len();
+        let t = self.threshold as usize;
+
+        // Evaluate polynomial for each byte at the current x-coordinate
+        let share_data: Vec<u8> = (0..secret_len)
+            .map(|byte_idx| {
+                let mut acc = FiniteField::new(0);
+                // Evaluate polynomial using Horner's method (iterating coefficients in reverse order)
+                for j in (0..t).rev() {
+                    let coeff = if j == 0 {
+                        FiniteField::new(self.data[byte_idx])
+                    } else {
+                        // Random coefficient for x^j is stored in coefficients at position byte_idx*(t-1) + (j-1)
+                        FiniteField::new(self.coefficients[byte_idx * (t - 1) + (j - 1)])
+                    };
+                    acc = acc * x + coeff;
+                }
+                acc.0
+            })
+            .collect();
+
+        let share = Share {
+            index: self.current_x,
+            data: share_data,
+            threshold: self.threshold,
+            total_shares: self.total_shares,
+            integrity_check: self.integrity_check,
+        };
+
+        // Increment x for next share, wrapping to 0 when we reach 256 (which stops iteration)
+        self.current_x = self.current_x.wrapping_add(1);
+
+        Some(share)
+    }
+
+    /// Returns the number of remaining shares that can be generated
+    ///
+    /// This provides a size hint for the iterator, which can be useful for
+    /// pre-allocating collections or progress tracking.
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = if self.current_x == 0 {
+            0
+        } else {
+            256 - self.current_x as usize
+        };
+        (remaining, Some(remaining))
+    }
+}
+
+impl ExactSizeIterator for Dealer {
+    /// Returns the exact number of remaining shares
+    fn len(&self) -> usize {
+        self.size_hint().0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1578,5 +1740,240 @@ mod tests {
         ShamirShare::reconstruct_stream(&mut sources, &mut dest_cursor).unwrap();
 
         assert_eq!(&destination, &data);
+    }
+
+    #[test]
+    fn test_dealer_basic_functionality() {
+        let secret = b"Hello, Dealer!";
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+
+        // Generate shares using dealer
+        let dealer_shares: Vec<Share> = shamir.dealer(secret).take(5).collect();
+        assert_eq!(dealer_shares.len(), 5);
+
+        // Verify share properties
+        for (i, share) in dealer_shares.iter().enumerate() {
+            assert_eq!(share.index, (i + 1) as u8);
+            assert_eq!(share.threshold, 3);
+            assert_eq!(share.total_shares, 5);
+            assert!(share.integrity_check); // Default is true
+        }
+
+        // Reconstruct with threshold shares
+        let reconstructed = ShamirShare::reconstruct(&dealer_shares[0..3]).unwrap();
+        assert_eq!(&reconstructed, secret);
+
+        // Reconstruct with more than threshold shares
+        let reconstructed = ShamirShare::reconstruct(&dealer_shares[1..5]).unwrap();
+        assert_eq!(&reconstructed, secret);
+    }
+
+    #[test]
+    fn test_dealer_vs_split_equivalence() {
+        let secret = b"Test equivalence between dealer and split";
+        let mut shamir = ShamirShare::builder(7, 4).build().unwrap();
+
+        // Generate shares using split
+        let split_shares = shamir.split(secret).unwrap();
+
+        // Generate shares using dealer
+        let dealer_shares: Vec<Share> = shamir.dealer(secret).take(7).collect();
+
+        // Both should produce the same number of shares
+        assert_eq!(split_shares.len(), dealer_shares.len());
+
+        // Both should be reconstructable
+        let reconstructed_split = ShamirShare::reconstruct(&split_shares[0..4]).unwrap();
+        let reconstructed_dealer = ShamirShare::reconstruct(&dealer_shares[0..4]).unwrap();
+
+        assert_eq!(&reconstructed_split, secret);
+        assert_eq!(&reconstructed_dealer, secret);
+        assert_eq!(reconstructed_split, reconstructed_dealer);
+    }
+
+    #[test]
+    fn test_dealer_lazy_evaluation() {
+        let secret = b"Lazy evaluation test";
+        let mut shamir = ShamirShare::builder(10, 5).build().unwrap();
+
+        // Create dealer but don't consume all shares
+        let mut dealer = shamir.dealer(secret);
+
+        // Take only first 3 shares
+        let first_three: Vec<Share> = dealer.by_ref().take(3).collect();
+        assert_eq!(first_three.len(), 3);
+        assert_eq!(first_three[0].index, 1);
+        assert_eq!(first_three[1].index, 2);
+        assert_eq!(first_three[2].index, 3);
+
+        // Take next 2 shares from the same dealer
+        let next_two: Vec<Share> = dealer.by_ref().take(2).collect();
+        assert_eq!(next_two.len(), 2);
+        assert_eq!(next_two[0].index, 4);
+        assert_eq!(next_two[1].index, 5);
+
+        // Combine shares and reconstruct
+        let mut combined_shares = first_three;
+        combined_shares.extend(next_two);
+
+        let reconstructed = ShamirShare::reconstruct(&combined_shares).unwrap();
+        assert_eq!(&reconstructed, secret);
+    }
+
+    #[test]
+    fn test_dealer_max_shares_limit() {
+        let secret = b"Max shares test";
+        let mut shamir = ShamirShare::builder(255, 128).build().unwrap();
+
+        let dealer = shamir.dealer(secret);
+
+        // Count all shares generated
+        let all_shares: Vec<Share> = dealer.collect();
+        assert_eq!(all_shares.len(), 255);
+
+        // Verify indices are correct (1 to 255)
+        for (i, share) in all_shares.iter().enumerate() {
+            assert_eq!(share.index, (i + 1) as u8);
+        }
+
+        // Verify reconstruction works with threshold shares
+        let reconstructed = ShamirShare::reconstruct(&all_shares[0..128]).unwrap();
+        assert_eq!(&reconstructed, secret);
+    }
+
+    #[test]
+    fn test_dealer_stops_at_255() {
+        let secret = b"Stop at 255 test";
+        let mut shamir = ShamirShare::builder(255, 128).build().unwrap();
+
+        let mut dealer = shamir.dealer(secret);
+
+        // Consume all 255 shares
+        let shares: Vec<Share> = dealer.by_ref().collect();
+        assert_eq!(shares.len(), 255);
+
+        // Dealer should be exhausted
+        assert_eq!(dealer.next(), None);
+        assert_eq!(dealer.next(), None); // Should remain None
+    }
+
+    #[test]
+    fn test_dealer_size_hint() {
+        let secret = b"Size hint test";
+        let mut shamir = ShamirShare::builder(10, 5).build().unwrap();
+
+        let mut dealer = shamir.dealer(secret);
+
+        // Initial size hint should be 255 (max possible shares)
+        assert_eq!(dealer.size_hint(), (255, Some(255)));
+        assert_eq!(dealer.len(), 255);
+
+        // Take one share
+        let _share = dealer.next().unwrap();
+        assert_eq!(dealer.size_hint(), (254, Some(254)));
+        assert_eq!(dealer.len(), 254);
+
+        // Take several more
+        let _shares: Vec<_> = dealer.by_ref().take(10).collect();
+        assert_eq!(dealer.size_hint(), (244, Some(244)));
+        assert_eq!(dealer.len(), 244);
+    }
+
+    #[test]
+    fn test_dealer_with_integrity_check_disabled() {
+        let config = Config::new().with_integrity_check(false);
+        let mut shamir = ShamirShare::builder(5, 3)
+            .with_config(config)
+            .build()
+            .unwrap();
+
+        let secret = b"No integrity check";
+
+        // Generate shares using dealer
+        let dealer_shares: Vec<Share> = shamir.dealer(secret).take(5).collect();
+
+        // Verify integrity_check is false
+        for share in &dealer_shares {
+            assert!(!share.integrity_check);
+        }
+
+        // Should still reconstruct correctly
+        let reconstructed = ShamirShare::reconstruct(&dealer_shares[0..3]).unwrap();
+        assert_eq!(&reconstructed, secret);
+
+        // Compare with split method
+        let split_shares = shamir.split(secret).unwrap();
+        let reconstructed_split = ShamirShare::reconstruct(&split_shares[0..3]).unwrap();
+        assert_eq!(reconstructed, reconstructed_split);
+    }
+
+    #[test]
+    fn test_dealer_empty_secret() {
+        let secret = b"";
+        let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+
+        let dealer_shares: Vec<Share> = shamir.dealer(secret).take(3).collect();
+        assert_eq!(dealer_shares.len(), 3);
+
+        let reconstructed = ShamirShare::reconstruct(&dealer_shares[0..2]).unwrap();
+        assert_eq!(&reconstructed, secret);
+    }
+
+    #[test]
+    fn test_dealer_single_byte_secret() {
+        let secret = b"x";
+        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+
+        let dealer_shares: Vec<Share> = shamir.dealer(secret).take(5).collect();
+        assert_eq!(dealer_shares.len(), 5);
+
+        let reconstructed = ShamirShare::reconstruct(&dealer_shares[0..3]).unwrap();
+        assert_eq!(&reconstructed, secret);
+    }
+
+    #[test]
+    fn test_dealer_different_share_combinations() {
+        let secret = b"Different dealer combinations test";
+        let mut shamir = ShamirShare::builder(7, 4).build().unwrap();
+
+        let dealer_shares: Vec<Share> = shamir.dealer(secret).take(7).collect();
+
+        // Try different combinations of 4 shares
+        let combinations = vec![
+            vec![0, 1, 2, 3],
+            vec![1, 2, 3, 4],
+            vec![2, 3, 4, 5],
+            vec![0, 2, 4, 6],
+            vec![1, 3, 5, 6],
+        ];
+
+        for combo in combinations {
+            let selected_shares: Vec<Share> =
+                combo.iter().map(|&i| dealer_shares[i].clone()).collect();
+            let reconstructed = ShamirShare::reconstruct(&selected_shares).unwrap();
+            assert_eq!(&reconstructed, secret);
+        }
+    }
+
+    #[test]
+    fn test_dealer_iterator_chain() {
+        let secret = b"Iterator chain test";
+        let mut shamir = ShamirShare::builder(10, 5).build().unwrap();
+
+        // Use iterator methods to filter and collect shares
+        let even_indexed_shares: Vec<Share> = shamir
+            .dealer(secret)
+            .filter(|share| share.index % 2 == 0)
+            .take(5)
+            .collect();
+
+        assert_eq!(even_indexed_shares.len(), 5);
+        for share in &even_indexed_shares {
+            assert_eq!(share.index % 2, 0);
+        }
+
+        // Should still be able to reconstruct
+        let reconstructed = ShamirShare::reconstruct(&even_indexed_shares).unwrap();
+        assert_eq!(&reconstructed, secret);
     }
 }
