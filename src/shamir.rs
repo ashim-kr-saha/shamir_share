@@ -1059,6 +1059,191 @@ impl ShamirShare {
 
         Ok(output_buffer)
     }
+
+    /// Generates share deltas by creating and evaluating a random polynomial whose secret is zero
+    ///
+    /// This private helper method creates a polynomial of degree `k-1` where the constant term
+    /// (the "secret") is zero, and evaluates it at the given share indices. The resulting
+    /// delta values can be added to existing shares for share refreshing.
+    ///
+    /// # Arguments
+    /// * `share_indices` - Slice of x-coordinates (share indices) to evaluate the polynomial at
+    /// * `data_length` - Length of the zero secret data to generate deltas for
+    ///
+    /// # Returns
+    /// Vector where each element contains the delta data for the corresponding share index
+    ///
+    /// # Security
+    /// - Uses cryptographically secure random coefficients
+    /// - Constant-time polynomial evaluation using Horner's method
+    /// - Zero constant term ensures deltas maintain the secret sharing property
+    fn generate_zero_polynomial_shares(&mut self, share_indices: &[u8], data_length: usize) -> Result<Vec<Vec<u8>>> {
+        let t = self.threshold as usize;
+        
+        // Generate random coefficients for all data bytes (for coefficients 1..t)
+        // The constant term (coefficient 0) is always zero for all bytes
+        let mut random_data = vec![0u8; data_length * (t - 1)];
+        self.rng.fill_bytes(&mut random_data);
+
+        // Evaluate the polynomial for each share index
+        let delta_shares: Vec<Vec<u8>> = share_indices
+            .iter()
+            .map(|&index| {
+                let x = FiniteField::new(index);
+                
+                // For each byte position, evaluate the polynomial at x
+                (0..data_length)
+                    .map(|byte_idx| {
+                        let mut acc = FiniteField::new(0);
+                        
+                        // Evaluate polynomial using Horner's method (iterating coefficients in reverse order)
+                        // P(x) = 0 + random_coef1 * x + random_coef2 * x^2 + ... + random_coef_{t-1} * x^(t-1)
+                        for j in (1..t).rev() {
+                            // Random coefficient for x^j is stored in random_data at position byte_idx*(t-1) + (j-1)
+                            let coeff = FiniteField::new(random_data[byte_idx * (t - 1) + (j - 1)]);
+                            acc = acc * x + coeff;
+                        }
+                        
+                        // Note: We skip j=0 because the constant term is always FiniteField(0)
+                        // The final multiplication by x handles the last coefficient
+                        acc = acc * x;
+                        
+                        acc.0
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Zeroize sensitive random coefficients before returning
+        #[cfg(feature = "zeroize")]
+        random_data.zeroize();
+
+        Ok(delta_shares)
+    }
+
+    /// Refreshes existing shares by adding zero-polynomial deltas to invalidate old shares
+    ///
+    /// This method generates new shares that maintain the same secret but have different share data,
+    /// effectively invalidating the old shares for security purposes. The refreshing process uses
+    /// additive sharing of a zero-secret polynomial, ensuring that the underlying secret remains
+    /// unchanged while the share values are completely refreshed.
+    ///
+    /// # Arguments
+    /// * `shares` - Slice of existing shares to refresh (must have at least `threshold` shares)
+    ///
+    /// # Returns
+    /// Vector of refreshed shares with the same indices and metadata but new share data
+    ///
+    /// # Security Purpose
+    /// Share refreshing is a critical security operation that:
+    /// - **Invalidates old shares**: Previous share values become useless after refreshing
+    /// - **Maintains secret integrity**: The underlying secret remains exactly the same
+    /// - **Prevents share accumulation**: Attackers cannot combine old and new shares
+    /// - **Enables proactive security**: Regular refreshing limits exposure windows
+    ///
+    /// # Mechanism
+    /// The refreshing process works by:
+    /// 1. Generating a random polynomial with zero constant term (zero-secret)
+    /// 2. Evaluating this polynomial at the same x-coordinates as the input shares
+    /// 3. Adding (XOR) the resulting deltas to the original share data
+    /// 4. Since the polynomial has zero secret, the refreshed shares reconstruct to the same value
+    ///
+    /// # Input Validation
+    /// This method performs comprehensive validation:
+    /// - Ensures the shares slice is not empty
+    /// - Verifies sufficient shares (at least `threshold` shares required)
+    /// - Checks that all shares have consistent data length
+    /// - Validates that all shares have the same integrity check setting
+    ///
+    /// # Errors
+    /// Returns `ShamirError` if:
+    /// - No shares provided (empty slice)
+    /// - Insufficient shares for the threshold requirement
+    /// - Shares have inconsistent data lengths
+    /// - Shares have different integrity check settings
+    /// - Internal polynomial generation fails
+    ///
+    /// # Example
+    /// ```
+    /// use shamir_share::ShamirShare;
+    ///
+    /// let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+    /// let secret = b"sensitive data";
+    /// 
+    /// // Create initial shares
+    /// let original_shares = scheme.split(secret).unwrap();
+    /// 
+    /// // Refresh the shares to invalidate old ones
+    /// let refreshed_shares = scheme.refresh_shares(&original_shares[0..3]).unwrap();
+    /// 
+    /// // Both sets reconstruct to the same secret
+    /// let original_secret = ShamirShare::reconstruct(&original_shares[0..3]).unwrap();
+    /// let refreshed_secret = ShamirShare::reconstruct(&refreshed_shares).unwrap();
+    /// assert_eq!(original_secret, refreshed_secret);
+    /// 
+    /// // But the share data is completely different
+    /// assert_ne!(original_shares[0].data, refreshed_shares[0].data);
+    /// ```
+    ///
+    /// # Performance
+    /// - Time complexity: O(n * m * k) where n = number of shares, m = data length, k = threshold
+    /// - Space complexity: O(n * m) for the output shares
+    /// - Uses constant-time operations to prevent side-channel attacks
+    pub fn refresh_shares(&mut self, shares: &[Share]) -> Result<Vec<Share>> {
+        // Input validation: Check if shares slice is empty
+        if shares.is_empty() {
+            return Err(ShamirError::InsufficientShares { needed: 1, got: 0 });
+        }
+
+        // Input validation: Check if we have sufficient shares for the threshold
+        if shares.len() < self.threshold as usize {
+            return Err(ShamirError::InsufficientShares {
+                needed: self.threshold,
+                got: shares.len() as u8,
+            });
+        }
+
+        // Extract reference values from the first share for consistency checking
+        let data_length = shares[0].data.len();
+        let integrity_check = shares[0].integrity_check;
+
+        // Input validation: Check that all shares have consistent data length and integrity check setting
+        if !shares.iter().all(|s| s.data.len() == data_length && s.integrity_check == integrity_check) {
+            return Err(ShamirError::InconsistentShareLength);
+        }
+
+        // Extract the indices from the input shares
+        let indices: Vec<u8> = shares.iter().map(|s| s.index).collect();
+
+        // Generate zero-polynomial deltas using the private helper
+        let deltas = self.generate_zero_polynomial_shares(&indices, data_length)?;
+
+        // Create refreshed shares by XORing original data with deltas
+        let refreshed_shares: Vec<Share> = shares
+            .iter()
+            .zip(deltas.iter())
+            .map(|(old_share, delta_data)| {
+                // XOR the original share data with the delta to create new share data
+                let new_data: Vec<u8> = old_share
+                    .data
+                    .iter()
+                    .zip(delta_data.iter())
+                    .map(|(&old_byte, &delta_byte)| old_byte ^ delta_byte)
+                    .collect();
+
+                // Create new share with refreshed data but same metadata
+                Share {
+                    index: old_share.index,
+                    data: new_data,
+                    threshold: old_share.threshold,
+                    total_shares: old_share.total_shares,
+                    integrity_check: old_share.integrity_check,
+                }
+            })
+            .collect();
+
+        Ok(refreshed_shares)
+    }
 }
 
 impl Iterator for Dealer {
