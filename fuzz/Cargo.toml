@@ -1,0 +1,25 @@
+[package]
+name = "shamir_share-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+shamir_share = { path = ".." }
+tempfile = "3.8"
+
+[[bin]]
+name = "fuzz_reconstruct"
+path = "fuzz_targets/fuzz_reconstruct.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_share_storage"
+path = "fuzz_targets/fuzz_share_storage.rs"
+test = false
+doc = false
