@@ -129,6 +129,7 @@ pub struct Dealer {
 /// let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
 /// assert_eq!(reconstructed, secret);
 /// ```
+#[derive(Debug)]
 pub struct ShamirShare {
     /// Total number of shares to generate
     total_shares: u8,
@@ -239,6 +240,16 @@ impl ShamirShareBuilder {
 }
 
 impl ShamirShare {
+    /// Returns the threshold (minimum number of shares needed for reconstruction)
+    pub fn threshold(&self) -> u8 {
+        self.threshold
+    }
+
+    /// Returns the total number of shares configured for this scheme
+    pub fn total_shares(&self) -> u8 {
+        self.total_shares
+    }
+
     /// Creates a builder for configuring a ShamirShare instance
     ///
     /// This is the recommended way to create ShamirShare instances as it allows

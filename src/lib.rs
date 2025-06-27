@@ -64,20 +64,22 @@
 mod config;
 mod error;
 mod finite_field;
+pub mod hsss;
 mod shamir;
 mod storage;
 
 pub use config::{Config, SplitMode};
 pub use error::{Result, ShamirError};
 pub use finite_field::FiniteField;
+pub use hsss::{AccessLevel, HierarchicalShare, Hsss, HsssBuilder};
 pub use shamir::{Dealer, ShamirShare, ShamirShareBuilder, Share};
 pub use storage::{FileShareStore, ShareStore};
 
 // Re-export common types for convenience
 pub mod prelude {
     pub use super::{
-        Config, Dealer, FileShareStore, Result, ShamirError, ShamirShare, ShamirShareBuilder,
-        Share, ShareStore, SplitMode,
+        AccessLevel, Config, Dealer, FileShareStore, HierarchicalShare, Hsss, HsssBuilder, Result,
+        ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareStore, SplitMode,
     };
 }
 
