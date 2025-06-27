@@ -34,13 +34,17 @@ tokio = { version = "1.45.1", features = ["full"] }
 tokio-test = "0.4.4"
 
 [[bench]]
-name = "shamir_benchmarks"
-harness = false
-
-[[bench]]
-name = "benchmark"
+name = "in_memory_benchmarks"
 harness = false
 
 [[bench]]
 name = "streaming_benchmarks"
+harness = false
+
+[[bench]]
+name = "hsss_benchmarks"
+harness = false
+
+[[bench]]
+name = "benchmark"
 harness = false

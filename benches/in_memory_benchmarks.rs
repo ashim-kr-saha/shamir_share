@@ -3,12 +3,25 @@ use std::hint::black_box;
 use criterion::{Criterion, criterion_group, criterion_main};
 use shamir_share::ShamirShare;
 
+/// Test data sizes for HSSS benchmarking
+const DATA_SIZES: &[usize] = &[
+    1024,            // 1KB
+    10 * 1024,       // 10KB
+    100 * 1024,      // 100KB
+    1 * 1024 * 1024, // 1MB
+];
+
+/// Creates mock data of the specified size
+fn create_mock_data(size: usize) -> Vec<u8> {
+    (0..size).map(|i| (i % 256) as u8).collect()
+}
+
 fn bench_split(c: &mut Criterion) {
     let mut group = c.benchmark_group("split");
 
     // Benchmark different data sizes
-    for size in [1024, 10240, 102400].iter() {
-        let data = vec![0u8; *size];
+    for size in DATA_SIZES.iter() {
+        let data = create_mock_data(*size);
         let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
 
         group.bench_function(format!("split_{}_bytes", size), |b| {
@@ -26,8 +39,8 @@ fn bench_reconstruct(c: &mut Criterion) {
     let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Benchmark different data sizes
-    for size in [1024, 10240, 102400].iter() {
-        let data = vec![0u8; *size];
+    for size in DATA_SIZES.iter() {
+        let data = create_mock_data(*size);
         let shares = shamir.split(&data).unwrap();
 
         group.bench_function(format!("reconstruct_{}_bytes", size), |b| {
@@ -44,8 +57,8 @@ fn bench_full_workflow(c: &mut Criterion) {
     let mut group = c.benchmark_group("full_workflow");
 
     // Benchmark complete workflow with different data sizes
-    for size in [1024, 10240, 102400].iter() {
-        let data = vec![0u8; *size];
+    for size in DATA_SIZES.iter() {
+        let data = create_mock_data(*size);
 
         group.bench_function(format!("workflow_{}_bytes", size), |b| {
             b.iter(|| {

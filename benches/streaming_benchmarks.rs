@@ -5,6 +5,7 @@ use std::io::Cursor;
 
 /// Test data sizes for benchmarking
 const DATA_SIZES: &[usize] = &[
+    1024,        // 1KB
     10 * 1024,   // 10KB
     100 * 1024,  // 100KB
     1024 * 1024, // 1MB
