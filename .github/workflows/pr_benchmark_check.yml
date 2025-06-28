@@ -21,6 +21,8 @@ jobs:
       CARGO_TERM_COLOR: always
       # Reduce benchmark sample size for faster CI runs
       CRITERION_SAMPLE_SIZE: 10
+      # Limit measurement time for faster CI execution
+      CRITERION_MEASUREMENT_TIME: 5
     
     steps:
       # Checkout the repository code
