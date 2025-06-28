@@ -79,14 +79,18 @@ jobs:
             } catch (error) {
               console.log('Could not read benchmark results:', error.message);
             }
-            
-            // Create a commit comment
-            github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: benchmarkSummary
-            });
+      
+            // Create a commit comment with error handling
+            try {
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+                body: benchmarkSummary
+              });
+            } catch (error) {
+              console.log('Failed to create commit comment:', error.message);
+            }
 
       # Optional: Upload benchmark artifacts for debugging
       - name: Upload benchmark artifacts
