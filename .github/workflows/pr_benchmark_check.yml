@@ -1,0 +1,129 @@
+name: Benchmark Regression Check
+
+# Trigger on pull requests targeting the main branch
+on:
+  pull_request:
+    branches: [ main ]
+
+# Ensure only one benchmark job runs at a time per PR
+concurrency:
+  group: benchmark-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark-regression-check:
+    name: Benchmark Regression Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    env:
+      # Optimize for CI environment
+      CARGO_TERM_COLOR: always
+      # Reduce benchmark sample size for faster CI runs
+      CRITERION_SAMPLE_SIZE: 10
+      # Limit measurement time for faster CI execution
+      CRITERION_MEASUREMENT_TIME: 5
+    
+    steps:
+      # Checkout the repository code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history to enable criterion to compare against baseline
+          fetch-depth: 0
+
+      # Install the stable Rust toolchain
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache dependencies to speed up builds
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Include benchmark target in cache key
+          key: benchmark-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+
+      # Checkout and run benchmarks on the base branch (main) to establish baseline
+      - name: Checkout base branch and run baseline benchmarks
+        run: |
+          # Get the base branch commit
+          git fetch origin main
+          BASE_SHA=$(git merge-base HEAD origin/main)
+          if [ -z "$BASE_SHA" ]; then
+            echo "Error: Could not find merge base with origin/main"
+            exit 1
+          fi
+          echo "Base SHA: $BASE_SHA"
+
+          # Store current branch/commit for return
+          CURRENT_SHA=$(git rev-parse HEAD)
+
+          # Checkout base branch
+          if ! git checkout $BASE_SHA; then
+            echo "Error: Failed to checkout base branch"
+            exit 1
+          fi
+
+          # Build first to ensure clean compilation
+          echo "Building baseline..."
+          cargo build --release --benches
+    
+          # Run benchmarks to establish baseline (save results to criterion directory)
+          echo "Running baseline benchmarks..."
+          cargo bench --benches
+    
+          # Return to PR branch
+          git checkout $CURRENT_SHA
+
+      # Build PR branch
+      - name: Build PR branch
+        run: |
+          echo "Building PR branch..."
+          cargo build --release --benches
+
+      # Run benchmarks for regression check on the PR branch
+      - name: Run benchmarks for regression check
+        run: |
+          echo "Running PR benchmarks for regression detection..."
+          # Criterion will automatically compare against the baseline we just created
+          # and exit with non-zero status if significant regression is detected
+          cargo bench --benches
+
+      # Optional: Upload benchmark results as artifacts for manual inspection
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: target/criterion/
+          retention-days: 30
+
+      # Optional: Add a comment to the PR with benchmark summary (if needed)
+      - name: Comment benchmark results
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `⚠️ **Benchmark Regression Detected**
+              
+              The benchmark suite has detected a statistically significant performance regression in this PR.
+              
+              Please review the changes and ensure they don't negatively impact performance, or provide justification for the regression if it's intentional.
+              
+              You can download the detailed benchmark results from the workflow artifacts to analyze the specific regressions.
+              
+              **Affected benchmark suites:**
+              - In-memory operations (split/reconstruct)
+              - Streaming operations (split_stream/reconstruct_stream)  
+              - HSSS operations (hierarchical secret sharing)
+              
+              **Next steps:**
+              1. Review the benchmark artifacts for detailed regression analysis
+              2. Optimize the code to eliminate regressions, or
+              3. Provide justification if the regression is acceptable
+              `
+            })
