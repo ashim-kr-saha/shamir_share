@@ -55,6 +55,25 @@ pub struct Share {
     pub compression: bool,
 }
 
+/// A lightweight view into share data for reconstruction without allocation
+///
+/// This struct provides a borrowed view of share data to avoid cloning during
+/// reconstruction operations. It's used internally by `reconstruct_stream` to
+/// eliminate allocation pressure in the hot loop.
+///
+/// # Security
+///
+/// - Maintains the same security properties as `Share`
+/// - Uses borrowed data to avoid unnecessary allocations
+/// - Constant-time operations are preserved
+#[derive(Debug, Clone, Copy)]
+pub struct ShareView<'a> {
+    /// Index of the share (x-coordinate in the polynomial)
+    pub index: u8,
+    /// Borrowed reference to the share data
+    pub data: &'a [u8],
+}
+
 /// Lazy iterator for generating shares using Shamir's Secret Sharing
 ///
 /// The `Dealer` provides a memory-efficient way to generate shares on-demand without
@@ -785,7 +804,6 @@ impl ShamirShare {
         let mut chunk_lengths_buffer = Vec::with_capacity(sources.len());
         let mut share_chunk_data_buffers: Vec<Vec<u8>> =
             (0..sources.len()).map(|_| Vec::new()).collect();
-        let mut temp_shares_for_reconstruction: Vec<Share> = Vec::with_capacity(sources.len());
         let mut reconstructed_chunk_buffer = Vec::new();
 
         loop {
@@ -829,26 +847,20 @@ impl ShamirShare {
                     .map_err(ShamirError::IoError)?;
             }
 
-            // Create temporary Share objects for reconstruction
-            // Reuse buffer to avoid allocations in the hot loop
-            temp_shares_for_reconstruction.clear();
-            let threshold = sources.len() as u8;
-            let total_shares = sources.len() as u8;
+            // Create temporary ShareView objects for reconstruction without allocation
+            // This avoids the expensive clone() operation in the hot loop
+            let share_views: Vec<ShareView> = share_chunk_data_buffers
+                .iter()
+                .enumerate()
+                .map(|(i, share_chunk_data)| ShareView {
+                    index: share_indices[i], // Use the actual share index from the stream
+                    data: share_chunk_data,  // Borrow the data instead of cloning
+                })
+                .collect();
 
-            for (i, share_chunk_data) in share_chunk_data_buffers.iter().enumerate() {
-                temp_shares_for_reconstruction.push(Share {
-                    index: share_indices[i],        // Use the actual share index from the stream
-                    data: share_chunk_data.clone(), // Unfortunately we need to clone here for the Share struct
-                    threshold,
-                    total_shares,
-                    integrity_check,
-                    compression,
-                });
-            }
-
-            // Reconstruct the chunk using optimized reconstruction with buffer reuse
-            let reconstructed_chunk = Self::reconstruct_chunk_optimized(
-                &temp_shares_for_reconstruction,
+            // Reconstruct the chunk using optimized reconstruction with borrowed data
+            let reconstructed_chunk = Self::reconstruct_chunk_from_views(
+                &share_views,
                 &mut reconstructed_chunk_buffer,
             )?;
 
@@ -1036,6 +1048,59 @@ impl ShamirShare {
         lagrange_coefficients
     }
 
+    /// Helper method to compute Lagrange coefficients for reconstruction using ShareView
+    ///
+    /// This version works with borrowed share data to avoid allocations in hot paths.
+    /// Used internally by `reconstruct_stream` for performance optimization.
+    ///
+    /// # Arguments
+    /// * `share_views` - Slice of share views to compute coefficients for
+    ///
+    /// # Returns
+    /// Vector of Lagrange coefficients for each share
+    ///
+    /// # Security
+    /// - Constant-time coefficient computation
+    /// - Validates share indices for uniqueness
+    #[inline]
+    fn compute_lagrange_coefficients_from_views(share_views: &[ShareView]) -> Result<Vec<FiniteField>> {
+        let xs: Vec<FiniteField> = share_views
+            .iter()
+            .map(|view| FiniteField::new(view.index))
+            .collect();
+
+        // Check for duplicate share indices
+        for i in 0..xs.len() {
+            for j in (i + 1)..xs.len() {
+                if xs[i] == xs[j] {
+                    return Err(ShamirError::InvalidShareFormat);
+                }
+            }
+        }
+
+        let p = xs.iter().fold(FiniteField::new(1), |acc, &x| acc * x);
+        let lagrange_coefficients: Result<Vec<FiniteField>> = xs
+            .iter()
+            .enumerate()
+            .map(|(i, &x_i)| {
+                // Since x_i != 0, division by x_i is safe via multiplication by its inverse
+                let numerator = p * x_i.inverse().unwrap();
+                let mut denominator = FiniteField::new(1);
+                for (j, &x_j) in xs.iter().enumerate() {
+                    if i != j {
+                        denominator = denominator * (x_i + x_j);
+                    }
+                }
+                denominator
+                    .inverse()
+                    .ok_or(ShamirError::InvalidShareFormat)
+                    .map(|inv| numerator * inv)
+            })
+            .collect();
+
+        lagrange_coefficients
+    }
+
     /// Helper method to reconstruct data from shares using Lagrange interpolation
     ///
     /// This is the canonical implementation for reconstructing data using Shamir's Secret Sharing.
@@ -1085,36 +1150,41 @@ impl ShamirShare {
         Ok(reconstructed_data)
     }
 
-    /// Optimized helper method to reconstruct a single chunk from shares with buffer reuse
+
+    /// Optimized helper method to reconstruct a single chunk from share views with buffer reuse
     ///
-    /// This version reuses a provided buffer to avoid allocations in hot paths.
-    /// Used internally by `reconstruct_stream` for performance optimization.
-    /// Shares the same core logic as `reconstruct_chunk` but optimizes for memory allocation.
+    /// This version uses borrowed share data to eliminate allocations in hot paths.
+    /// Used internally by `reconstruct_stream` for maximum performance optimization.
     ///
     /// # Arguments
-    /// * `shares` - Slice of shares to use for reconstruction
+    /// * `share_views` - Slice of share views to use for reconstruction
     /// * `output_buffer` - Reusable buffer for the reconstructed data
     ///
     /// # Returns
     /// Slice reference to the reconstructed data in the output buffer
+    ///
+    /// # Security
+    /// - Constant-time Lagrange interpolation
+    /// - Uses borrowed data to avoid allocations
+    /// - Validates share consistency before processing
     #[inline]
-    fn reconstruct_chunk_optimized<'a>(
-        shares: &[Share],
+    fn reconstruct_chunk_from_views<'a>(
+        share_views: &[ShareView],
         output_buffer: &'a mut Vec<u8>,
     ) -> Result<&'a [u8]> {
-        if shares.is_empty() {
+        if share_views.is_empty() {
             return Err(ShamirError::InsufficientShares { needed: 1, got: 0 });
         }
 
-        let secret_len = shares[0].data.len();
+        let secret_len = share_views[0].data.len();
 
-        // Ensure all shares have consistent length
-        if !shares.iter().all(|s| s.data.len() == secret_len) {
+        // Ensure all share views have consistent length
+        if !share_views.iter().all(|v| v.data.len() == secret_len) {
             return Err(ShamirError::InconsistentShareLength);
         }
 
-        // Use shared Lagrange coefficient computation
-        let lagrange_coefficients = Self::compute_lagrange_coefficients(shares)?;
+        // Use shared Lagrange coefficient computation for views
+        let lagrange_coefficients = Self::compute_lagrange_coefficients_from_views(share_views)?;
 
         // Reuse output buffer to avoid allocations in the hot loop
         output_buffer.clear();
@@ -1122,11 +1192,11 @@ impl ShamirShare {
 
         // Reconstruct each byte directly into the output buffer
         for byte_idx in 0..secret_len {
-            let reconstructed_byte = shares
+            let reconstructed_byte = share_views
                 .iter()
                 .zip(&lagrange_coefficients)
-                .fold(FiniteField::new(0), |acc, (share, &coeff)| {
-                    acc + coeff * FiniteField::new(share.data[byte_idx])
+                .fold(FiniteField::new(0), |acc, (view, &coeff)| {
+                    acc + coeff * FiniteField::new(view.data[byte_idx])
                 })
                 .0;
             output_buffer.push(reconstructed_byte);
@@ -1166,7 +1236,7 @@ impl ShamirShare {
 
         // Evaluate the polynomial for each share index
         let delta_shares: Vec<Vec<u8>> = share_indices
-            .iter()
+            .par_iter()
             .map(|&index| {
                 let x = FiniteField::new(index);
 

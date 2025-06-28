@@ -7,7 +7,6 @@ const DATA_SIZES: &[usize] = &[
     1024,            // 1KB
     10 * 1024,       // 10KB
     100 * 1024,      // 100KB
-    1 * 1024 * 1024, // 1MB
 ];
 
 /// Creates mock data of the specified size
@@ -309,10 +308,39 @@ fn bench_hsss_scheme_creation(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark HSSS split_secret performance with large secrets and complex hierarchy
+fn bench_hsss_split_large_secrets(c: &mut Criterion) {
+    let mut group = c.benchmark_group("HSSS Split Large Secrets");
+    
+    // Test with a large secret (100KB) and complex hierarchy
+    let data = create_mock_data(100 * 1024);
+    
+    group.bench_function("complex_hierarchy_100KB", |b| {
+        b.iter(|| {
+            // Create a complex HSSS scheme: k=10, 6 levels with varying share counts
+            let mut hsss = Hsss::builder(10)
+                .add_level("CEO", 10)
+                .add_level("CTO", 7)
+                .add_level("VP", 5)
+                .add_level("Director", 4)
+                .add_level("Manager", 3)
+                .add_level("Employee", 2)
+                .build()
+                .unwrap();
+            
+            let hierarchical_shares = hsss.split_secret(black_box(&data)).unwrap();
+            black_box(hierarchical_shares);
+        });
+    });
+    
+    group.finish();
+}
+
 criterion_group!(
     hsss_benches,
     bench_hsss_split_simple,
     bench_hsss_split_complex,
+    bench_hsss_split_large_secrets,
     bench_hsss_reconstruct_simple,
     bench_hsss_reconstruct_complex,
     bench_hsss_reconstruct_collaboration,
