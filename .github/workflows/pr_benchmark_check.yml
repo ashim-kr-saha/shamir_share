@@ -48,20 +48,23 @@ jobs:
           git fetch origin main
           BASE_SHA=$(git merge-base HEAD origin/main)
           echo "Base SHA: $BASE_SHA"
-          
+    
+          # Store current branch/commit for return
+          CURRENT_SHA=$(git rev-parse HEAD)
+    
           # Checkout base branch
           git checkout $BASE_SHA
-          
+    
           # Build first to ensure clean compilation
           echo "Building baseline..."
           cargo build --release --benches
-          
+    
           # Run benchmarks to establish baseline (save results to criterion directory)
           echo "Running baseline benchmarks..."
           cargo bench --benches
-          
+    
           # Return to PR branch
-          git checkout -
+          git checkout $CURRENT_SHA
 
       # Build PR branch
       - name: Build PR branch
