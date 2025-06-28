@@ -49,14 +49,21 @@ jobs:
           # Get the base branch commit
           git fetch origin main
           BASE_SHA=$(git merge-base HEAD origin/main)
+          if [ -z "$BASE_SHA" ]; then
+            echo "Error: Could not find merge base with origin/main"
+            exit 1
+          fi
           echo "Base SHA: $BASE_SHA"
-    
+
           # Store current branch/commit for return
           CURRENT_SHA=$(git rev-parse HEAD)
-    
+
           # Checkout base branch
-          git checkout $BASE_SHA
-    
+          if ! git checkout $BASE_SHA; then
+            echo "Error: Failed to checkout base branch"
+            exit 1
+          fi
+
           # Build first to ensure clean compilation
           echo "Building baseline..."
           cargo build --release --benches
