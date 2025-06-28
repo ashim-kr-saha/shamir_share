@@ -24,9 +24,9 @@ Our benchmark CI system consists of two complementary workflows:
 graph TD
     A[PR Created] --> B[Checkout PR Code]
     B --> C[Install Rust & Cache]
-    C --> D[Checkout Base Branch]
+    C --> D[Checkout Base Branch from PR]
     D --> E[Run Baseline Benchmarks]
-    E --> F[Checkout PR Branch]
+    E --> F[Return to PR Branch]
     F --> G[Run PR Benchmarks]
     G --> H{Regression Detected?}
     H -->|Yes| I[❌ Fail Build + Comment]
