@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["Ashim Kumar Saha"]
 description = "A secure and efficient Rust library for Shamir's Secret Sharing"
 license = "MIT"
-repository = "https://github.com/ashim_kr_saha/shamir_share"
+repository = "https://github.com/ashim-kr-saha/shamir_share"
 keywords = ["cryptography", "secret-sharing", "security", "shamir"]
 categories = ["cryptography", "algorithms"]
 
