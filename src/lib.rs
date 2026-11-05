@@ -7,7 +7,7 @@
 //! ## Security Features
 //!
 //! - **Constant-time GF(2^8) arithmetic** - No lookup tables, resistant to cache-timing attacks
-//! - **Cryptographically secure random generation** - Uses ChaCha20Rng seeded from OsRng  
+//! - **Cryptographically secure random generation** - Uses ChaCha20Rng seeded from SysRng  
 //! - **Integrity verification** - SHA-256 hash checking with constant-time comparison
 //! - **Memory safety** - Written in safe Rust with zero unsafe blocks
 //!

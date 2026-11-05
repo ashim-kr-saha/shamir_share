@@ -1,9 +1,9 @@
 use crate::config::Config;
 use crate::error::{Result, ShamirError};
 use crate::finite_field::FiniteField;
-use rand::rngs::OsRng;
+use rand::rngs::SysRng;
 use rand_chacha::ChaCha20Rng;
-use rand_chacha::rand_core::RngCore;
+use rand_chacha::rand_core::Rng;
 use rand_core::SeedableRng;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::*;
@@ -129,7 +129,7 @@ pub struct Dealer {
 /// # Security Features
 ///
 /// - **Constant-time operations**: All GF(2^8) arithmetic uses constant-time algorithms
-/// - **Secure random generation**: ChaCha20Rng seeded from OsRng for polynomial coefficients  
+/// - **Secure random generation**: ChaCha20Rng seeded from SysRng for polynomial coefficients  
 /// - **Integrity verification**: SHA-256 hash prepended to secret with constant-time verification
 /// - **Side-channel resistance**: No lookup tables or data-dependent branching
 ///
@@ -253,7 +253,7 @@ impl ShamirShareBuilder {
             total_shares: self.total_shares,
             threshold: self.threshold,
             config: self.config,
-            rng: ChaCha20Rng::try_from_rng(&mut OsRng).unwrap(),
+            rng: ChaCha20Rng::try_from_rng(&mut SysRng).unwrap(),
         })
     }
 }
