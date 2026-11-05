@@ -45,7 +45,7 @@ jobs:
 
       # Run and compare benchmarks, updating the gh-pages branch
       - name: Run and Compare Benchmarks
-        uses: cargo-criterion/criterion-compare-action@v3
+        uses: boa-dev/criterion-compare-action@v3
         with:
           # The token is necessary to push to the gh-pages branch
           token: ${{ secrets.GITHUB_TOKEN }}

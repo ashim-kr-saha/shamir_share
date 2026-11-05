@@ -13,7 +13,7 @@ We welcome contributions to the shamir_share library! This document provides gui
 
 ## Development Requirements
 
-- Rust 1.70 or later
+- Rust 1.85 or later (edition 2024)
 - Cargo for building and testing
 
 ## Code Quality Standards

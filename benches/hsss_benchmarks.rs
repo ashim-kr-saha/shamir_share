@@ -4,9 +4,9 @@ use std::hint::black_box;
 
 /// Test data sizes for HSSS benchmarking
 const DATA_SIZES: &[usize] = &[
-    1024,            // 1KB
-    10 * 1024,       // 10KB
-    100 * 1024,      // 100KB
+    1024,       // 1KB
+    10 * 1024,  // 10KB
+    100 * 1024, // 100KB
 ];
 
 /// Creates mock data of the specified size
@@ -311,10 +311,10 @@ fn bench_hsss_scheme_creation(c: &mut Criterion) {
 /// Benchmark HSSS split_secret performance with large secrets and complex hierarchy
 fn bench_hsss_split_large_secrets(c: &mut Criterion) {
     let mut group = c.benchmark_group("HSSS Split Large Secrets");
-    
+
     // Test with a large secret (100KB) and complex hierarchy
     let data = create_mock_data(100 * 1024);
-    
+
     group.bench_function("complex_hierarchy_100KB", |b| {
         b.iter(|| {
             // Create a complex HSSS scheme: k=10, 6 levels with varying share counts
@@ -327,12 +327,12 @@ fn bench_hsss_split_large_secrets(c: &mut Criterion) {
                 .add_level("Employee", 2)
                 .build()
                 .unwrap();
-            
+
             let hierarchical_shares = hsss.split_secret(black_box(&data)).unwrap();
             black_box(hierarchical_shares);
         });
     });
-    
+
     group.finish();
 }
 

@@ -21,7 +21,7 @@ bench-streaming:
     cargo bench --bench streaming_benchmarks
 
 bench-shamir:
-    cargo bench --bench shamir_benchmarks
+    cargo bench --bench in_memory_benchmarks
 
 # Run clippy lints
 lint:
@@ -34,7 +34,7 @@ fmt:
 # Build documentation
 docs:
     cargo doc --no-deps --document-private-items
-    @echo "Documentation built at target/doc/security/index.html"
+    @echo "Documentation built at target/doc/shamir_share/index.html"
 
 # Run security audit
 audit:
@@ -67,8 +67,15 @@ coverage-report: coverage
 
 # Run fuzzing tests (requires cargo-fuzz)
 fuzz:
-    cargo install cargo-fuzz
-    cargo fuzz run fuzz_target_1 -- -max_total_time=3600
+    cargo fuzz run fuzz_reconstruct -- -max_total_time=3600
+
+# Run stream reconstruction fuzzing
+fuzz-stream:
+    cargo fuzz run fuzz_reconstruct_stream -- -max_total_time=3600
+
+# Run storage fuzzing
+fuzz-storage:
+    cargo fuzz run fuzz_share_storage -- -max_total_time=3600
 
 # Install development dependencies
 setup-dev:
@@ -81,7 +88,7 @@ watch:
 # Generate documentation and open in browser
 docs-open: docs
     @echo "Opening documentation..."
-    open target/doc/security/index.html
+    open target/doc/shamir_share/index.html
 
 # Run performance profiling
 profile:
@@ -90,21 +97,18 @@ profile:
 
 # Run custom performance test
 perf-test:
-    @echo "Building and running performance test..."
-    rustc --edition 2024 -O performance_test.rs -L target/release/deps --extern shamir_share=$(find target/release/deps -name "libshamir_share*.rlib" | head -n 1)
-    ./performance_test
+    @echo "Running performance test example..."
+    cargo run --release --example performance_test
 
 # Build release and run performance test
 perf-test-full: build-release
-    @echo "Building and running performance test with latest release build..."
-    rustc --edition 2024 -O performance_test.rs -L target/release/deps --extern shamir_share=$(find target/release/deps -name "libshamir_share*.rlib" | head -n 1)
-    ./performance_test
+    @echo "Running performance test with release build..."
+    cargo run --release --example performance_test
 
 # Run performance comparison across different configurations
 perf-compare: build-release
-    @echo "Building and running performance comparison..."
-    rustc --edition 2024 -O performance_compare.rs -L target/release/deps --extern shamir_share=$(find target/release/deps -name "libshamir_share*.rlib" | head -n 1)
-    ./performance_compare
+    @echo "Running performance comparison..."
+    cargo run --release --example performance_compare
 
 # Run all performance tests and generate a report
 perf-report: perf-test-full perf-compare
@@ -129,7 +133,7 @@ security-check: audit security-scan
 # Generate and view documentation with examples
 docs-with-examples: docs
     cargo test --doc
-    open target/doc/security/index.html
+    open target/doc/shamir_share/index.html
 
 # Run all CI checks
 ci: fmt lint test audit security-check

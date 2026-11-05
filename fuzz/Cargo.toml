@@ -23,3 +23,9 @@ name = "fuzz_share_storage"
 path = "fuzz_targets/fuzz_share_storage.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_reconstruct_stream"
+path = "fuzz_targets/fuzz_reconstruct_stream.rs"
+test = false
+doc = false

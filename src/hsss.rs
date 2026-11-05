@@ -29,6 +29,7 @@
 //!     .unwrap();
 //! ```
 
+use crate::config::Config;
 use crate::error::{Result, ShamirError};
 use crate::shamir::{ShamirShare, Share};
 
@@ -147,6 +148,8 @@ pub struct HsssBuilder {
     master_threshold: u8,
     /// Access levels being defined
     levels: Vec<AccessLevel>,
+    /// Configuration for the underlying Shamir scheme
+    config: Config,
 }
 
 impl HsssBuilder {
@@ -156,7 +159,7 @@ impl HsssBuilder {
     /// the secret. Participants can combine their shares to meet this threshold.
     ///
     /// # Arguments
-    /// * `master_threshold` - Minimum number of shares required for reconstruction (1-255)
+    /// * `master_threshold` - Minimum number of shares required for reconstruction (2-255)
     ///
     /// # Example
     /// ```
@@ -168,7 +171,14 @@ impl HsssBuilder {
         Self {
             master_threshold,
             levels: Vec::new(),
+            config: Config::default(),
         }
+    }
+
+    /// Sets custom configuration for the underlying Shamir scheme
+    pub fn with_config(mut self, config: Config) -> Self {
+        self.config = config;
+        self
     }
 
     /// Adds a new access level to the hierarchical scheme
@@ -233,7 +243,7 @@ impl HsssBuilder {
     /// ```
     pub fn build(self) -> Result<Hsss> {
         // Validate master threshold
-        if self.master_threshold == 0 {
+        if self.master_threshold < 2 {
             return Err(ShamirError::InvalidThreshold(self.master_threshold));
         }
 
@@ -252,7 +262,11 @@ impl HsssBuilder {
         }
 
         // Calculate total number of shares needed (n_master)
-        let total_shares: u32 = self.levels.iter().map(|level| level.shares_count as u32).sum();
+        let total_shares: u32 = self
+            .levels
+            .iter()
+            .map(|level| level.shares_count as u32)
+            .sum();
 
         // Validate total shares count
         if total_shares == 0 {
@@ -276,7 +290,9 @@ impl HsssBuilder {
         }
 
         // Create the underlying Shamir scheme
-        let master_scheme = ShamirShare::builder(n_master, self.master_threshold).build()?;
+        let master_scheme = ShamirShare::builder(n_master, self.master_threshold)
+            .with_config(self.config)
+            .build()?;
 
         Ok(Hsss {
             master_scheme,
@@ -453,14 +469,14 @@ impl Hsss {
         // Generate all master shares at once using the optimized Shamir implementation
         // This is much more efficient than the previous dealer-based approach
         let all_master_shares = self.master_scheme.split(secret)?;
-        
+
         // Distribute master shares to hierarchical levels
         let mut share_iter = all_master_shares.into_iter();
         let mut hierarchical_shares = Vec::with_capacity(self.levels.len());
-        
+
         for level in &self.levels {
             let mut shares = Vec::with_capacity(level.shares_count as usize);
-            
+
             for _ in 0..level.shares_count {
                 // Take the next master share
                 let share = share_iter.next().ok_or_else(|| {
@@ -469,19 +485,19 @@ impl Hsss {
                         level.name
                     ))
                 })?;
-                
+
                 shares.push(share);
             }
-            
+
             // Create the hierarchical share for this level
             let hierarchical_share = HierarchicalShare {
                 level_name: level.name.clone(),
                 shares,
             };
-            
+
             hierarchical_shares.push(hierarchical_share);
         }
-        
+
         Ok(hierarchical_shares)
     }
 
@@ -548,11 +564,11 @@ impl Hsss {
     pub fn reconstruct(&self, hierarchical_shares: &[HierarchicalShare]) -> Result<Vec<u8>> {
         // Flatten all shares from all hierarchical shares into a single vector
         let mut all_shares = Vec::new();
-        
+
         for hierarchical_share in hierarchical_shares {
             all_shares.extend_from_slice(&hierarchical_share.shares);
         }
-        
+
         // Use the standard Shamir reconstruction method
         ShamirShare::reconstruct(&all_shares)
     }
@@ -608,10 +624,7 @@ mod tests {
 
     #[test]
     fn test_hsss_builder_single_level() {
-        let hsss = Hsss::builder(3)
-            .add_level("Admin", 5)
-            .build()
-            .unwrap();
+        let hsss = Hsss::builder(3).add_level("Admin", 5).build().unwrap();
 
         assert_eq!(hsss.master_threshold(), 3);
         assert_eq!(hsss.total_shares(), 5);
@@ -622,9 +635,7 @@ mod tests {
 
     #[test]
     fn test_hsss_builder_validation_zero_threshold() {
-        let result = Hsss::builder(0)
-            .add_level("President", 5)
-            .build();
+        let result = Hsss::builder(0).add_level("President", 5).build();
 
         assert!(matches!(result, Err(ShamirError::InvalidThreshold(0))));
     }
@@ -638,9 +649,7 @@ mod tests {
 
     #[test]
     fn test_hsss_builder_validation_zero_shares() {
-        let result = Hsss::builder(5)
-            .add_level("President", 0)
-            .build();
+        let result = Hsss::builder(5).add_level("President", 0).build();
 
         assert!(matches!(result, Err(ShamirError::InvalidShareCount(0))));
     }
@@ -654,7 +663,10 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ShamirError::ThresholdTooLarge { threshold: 10, total_shares: 8 })
+            Err(ShamirError::ThresholdTooLarge {
+                threshold: 10,
+                total_shares: 8
+            })
         ));
     }
 
@@ -697,10 +709,7 @@ mod tests {
 
     #[test]
     fn test_hsss_builder_max_shares() {
-        let hsss = Hsss::builder(255)
-            .add_level("Level1", 255)
-            .build()
-            .unwrap();
+        let hsss = Hsss::builder(255).add_level("Level1", 255).build().unwrap();
 
         assert_eq!(hsss.master_threshold(), 255);
         assert_eq!(hsss.total_shares(), 255);
@@ -747,13 +756,21 @@ mod tests {
         assert_eq!(level.name, "");
         assert_eq!(level.shares_count, 0);
 
+        let mut share = crate::Share::new(1, vec![0x42; 32], 3, 5, true, false);
+        share.zeroize();
+        assert_eq!(share.index, 0);
+        assert_eq!(share.threshold, 0);
+        assert_eq!(share.total_shares, 0);
+        assert!(!share.integrity_check);
+        assert!(!share.compression);
+        assert_eq!(share.data.len(), 0);
+
         let mut hierarchical_share = HierarchicalShare {
             level_name: "Secret".to_string(),
-            shares: vec![],
+            shares: vec![crate::Share::new(1, vec![0x42; 32], 3, 5, true, false)],
         };
 
         hierarchical_share.zeroize();
-        // After zeroization, the level_name should be empty and shares should be empty
         assert_eq!(hierarchical_share.level_name, "");
         assert_eq!(hierarchical_share.shares.len(), 0);
     }
@@ -860,19 +877,22 @@ mod tests {
 
         // VP alone should not be able to reconstruct (3 shares < threshold of 5)
         let result = hsss.reconstruct(&hierarchical_shares[1..2]);
-        assert!(matches!(result, Err(ShamirError::InsufficientShares { needed: 5, got: 3 })));
+        assert!(matches!(
+            result,
+            Err(ShamirError::InsufficientShares { needed: 5, got: 3 })
+        ));
 
         // Executive alone should not be able to reconstruct (2 shares < threshold of 5)
         let result = hsss.reconstruct(&hierarchical_shares[2..3]);
-        assert!(matches!(result, Err(ShamirError::InsufficientShares { needed: 5, got: 2 })));
+        assert!(matches!(
+            result,
+            Err(ShamirError::InsufficientShares { needed: 5, got: 2 })
+        ));
     }
 
     #[test]
     fn test_split_secret_single_level() {
-        let mut hsss = Hsss::builder(3)
-            .add_level("Admin", 5)
-            .build()
-            .unwrap();
+        let mut hsss = Hsss::builder(3).add_level("Admin", 5).build().unwrap();
 
         let secret = b"admin secret";
         let hierarchical_shares = hsss.split_secret(secret).unwrap();
@@ -898,7 +918,7 @@ mod tests {
         let hierarchical_shares = hsss.split_secret(secret).unwrap();
 
         assert_eq!(hierarchical_shares.len(), 2);
-        
+
         // Should be able to reconstruct empty secret
         let reconstructed = hsss.reconstruct(&hierarchical_shares).unwrap();
         assert_eq!(reconstructed, secret);
@@ -920,9 +940,9 @@ mod tests {
 
         assert_eq!(hierarchical_shares.len(), 4);
         assert_eq!(hierarchical_shares[0].shares.len(), 10); // CEO
-        assert_eq!(hierarchical_shares[1].shares.len(), 7);  // CTO
-        assert_eq!(hierarchical_shares[2].shares.len(), 5);  // Manager
-        assert_eq!(hierarchical_shares[3].shares.len(), 3);  // Employee
+        assert_eq!(hierarchical_shares[1].shares.len(), 7); // CTO
+        assert_eq!(hierarchical_shares[2].shares.len(), 5); // Manager
+        assert_eq!(hierarchical_shares[3].shares.len(), 3); // Employee
 
         // CEO should be able to reconstruct alone
         let reconstructed = hsss.reconstruct(&hierarchical_shares[0..1]).unwrap();
@@ -961,7 +981,7 @@ mod tests {
                     selected_shares.push(hierarchical_shares[level_idx].clone());
                 }
             }
-            
+
             let reconstructed = hsss.reconstruct(&selected_shares).unwrap();
             assert_eq!(reconstructed, secret);
         }
@@ -969,14 +989,14 @@ mod tests {
 
     #[test]
     fn test_reconstruct_no_hierarchical_shares() {
-        let hsss = Hsss::builder(5)
-            .add_level("President", 5)
-            .build()
-            .unwrap();
+        let hsss = Hsss::builder(5).add_level("President", 5).build().unwrap();
 
         // Empty slice should fail
         let result = hsss.reconstruct(&[]);
-        assert!(matches!(result, Err(ShamirError::InsufficientShares { needed: 1, got: 0 })));
+        assert!(matches!(
+            result,
+            Err(ShamirError::InsufficientShares { needed: 1, got: 0 })
+        ));
     }
 
     #[test]
@@ -1002,7 +1022,12 @@ mod tests {
         // Verify all indices are unique
         all_indices.sort();
         for i in 1..all_indices.len() {
-            assert_ne!(all_indices[i-1], all_indices[i], "Found duplicate share index: {}", all_indices[i]);
+            assert_ne!(
+                all_indices[i - 1],
+                all_indices[i],
+                "Found duplicate share index: {}",
+                all_indices[i]
+            );
         }
 
         // Verify indices are in expected range (1 to total_shares)
@@ -1016,18 +1041,12 @@ mod tests {
 
         // Create HSSS with integrity check disabled
         let config = Config::new().with_integrity_check(false);
-        let master_scheme = ShamirShare::builder(10, 5)
+        let mut hsss = Hsss::builder(5)
             .with_config(config)
+            .add_level("Admin", 6)
+            .add_level("User", 4)
             .build()
             .unwrap();
-
-        let mut hsss = Hsss {
-            master_scheme,
-            levels: vec![
-                AccessLevel { name: "Admin".to_string(), shares_count: 6 },
-                AccessLevel { name: "User".to_string(), shares_count: 4 },
-            ],
-        };
 
         let secret = b"no integrity check";
         let hierarchical_shares = hsss.split_secret(secret).unwrap();
@@ -1048,9 +1067,9 @@ mod tests {
     fn test_hsss_integration_example() {
         // This test demonstrates the full HSSS workflow as described in the prompt
         let mut hsss = Hsss::builder(5)
-            .add_level("President", 5)    // President gets 5 shares (can reconstruct alone)
-            .add_level("VP", 3)           // VP gets 3 shares
-            .add_level("Executive", 2)    // Executive gets 2 shares
+            .add_level("President", 5) // President gets 5 shares (can reconstruct alone)
+            .add_level("VP", 3) // VP gets 3 shares
+            .add_level("Executive", 2) // Executive gets 2 shares
             .build()
             .unwrap();
 
@@ -1058,7 +1077,7 @@ mod tests {
 
         // Split the secret into hierarchical shares
         let hierarchical_shares = hsss.split_secret(secret).unwrap();
-        
+
         // Verify the structure
         assert_eq!(hierarchical_shares.len(), 3);
         assert_eq!(hierarchical_shares[0].level_name, "President");
@@ -1078,11 +1097,17 @@ mod tests {
 
         // Scenario 3: VP alone should fail (3 shares < threshold of 5)
         let result = hsss.reconstruct(&hierarchical_shares[1..2]);
-        assert!(matches!(result, Err(ShamirError::InsufficientShares { needed: 5, got: 3 })));
+        assert!(matches!(
+            result,
+            Err(ShamirError::InsufficientShares { needed: 5, got: 3 })
+        ));
 
         // Scenario 4: Executive alone should fail (2 shares < threshold of 5)
         let result = hsss.reconstruct(&hierarchical_shares[2..3]);
-        assert!(matches!(result, Err(ShamirError::InsufficientShares { needed: 5, got: 2 })));
+        assert!(matches!(
+            result,
+            Err(ShamirError::InsufficientShares { needed: 5, got: 2 })
+        ));
 
         // Scenario 5: All levels together should work (5 + 3 + 2 = 10 shares >= threshold of 5)
         let reconstructed = hsss.reconstruct(&hierarchical_shares).unwrap();

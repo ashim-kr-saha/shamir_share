@@ -20,7 +20,9 @@ fn test_president_can_reconstruct_alone() {
     assert_eq!(president_shares.level_name, "President");
     assert_eq!(president_shares.shares.len(), 5);
 
-    let reconstructed = hsss.reconstruct(&[president_shares.clone()]).unwrap();
+    let reconstructed = hsss
+        .reconstruct(std::slice::from_ref(president_shares))
+        .unwrap();
     assert_eq!(reconstructed, secret);
 }
 
@@ -102,7 +104,7 @@ fn test_vp_alone_cannot_reconstruct() {
     assert_eq!(vp_shares.shares.len(), 3);
 
     // Test using the HSSS reconstruct method
-    let result = hsss.reconstruct(&[vp_shares.clone()]);
+    let result = hsss.reconstruct(std::slice::from_ref(vp_shares));
     assert!(matches!(
         result,
         Err(ShamirError::InsufficientShares { needed: 5, got: 3 })
@@ -249,7 +251,9 @@ fn test_edge_case_exact_threshold() {
 
     // Test: Manager alone can reconstruct (3 shares = threshold of 3)
     let manager_shares = &all_h_shares[0];
-    let reconstructed = hsss.reconstruct(&[manager_shares.clone()]).unwrap();
+    let reconstructed = hsss
+        .reconstruct(std::slice::from_ref(manager_shares))
+        .unwrap();
     assert_eq!(reconstructed, secret);
 
     // Test: All three employees together can reconstruct (1 + 1 + 1 = 3 shares = threshold of 3)
@@ -293,7 +297,7 @@ fn test_complex_hierarchy() {
 
     // Test: CEO alone can reconstruct (7 shares = threshold of 7)
     let ceo_shares = &all_h_shares[0];
-    let reconstructed = hsss.reconstruct(&[ceo_shares.clone()]).unwrap();
+    let reconstructed = hsss.reconstruct(std::slice::from_ref(ceo_shares)).unwrap();
     assert_eq!(reconstructed, secret);
 
     // Test: CTO + Manager1 can reconstruct (4 + 3 = 7 shares = threshold of 7)
@@ -331,7 +335,7 @@ fn test_complex_hierarchy() {
     assert_eq!(reconstructed, secret);
 
     // Test: CTO alone cannot reconstruct (4 shares < threshold of 7)
-    let result = hsss.reconstruct(&[cto_shares.clone()]);
+    let result = hsss.reconstruct(std::slice::from_ref(cto_shares));
     assert!(matches!(
         result,
         Err(ShamirError::InsufficientShares { needed: 7, got: 4 })

@@ -5,22 +5,16 @@ use zeroize::Zeroize;
 
 /// Constant-time multiplication in GF(2^8)
 ///
-/// Implements the Russian Peasant Multiplication algorithm which is
-/// constant-time and resistant to side-channel attacks.
+/// Implements the Russian Peasant Multiplication algorithm using branchless
+/// bitmasking to resist timing side-channel attacks.
 #[inline]
-fn gf256_multiply_const_time(a: u8, b: u8) -> u8 {
-    let mut a = a;
-    let mut b = b;
+fn gf256_multiply_const_time(mut a: u8, mut b: u8) -> u8 {
     let mut p: u8 = 0;
     for _ in 0..8 {
-        if (b & 1) != 0 {
-            p ^= a;
-        }
-        let carry = a & 0x80;
-        a <<= 1;
-        if carry != 0 {
-            a ^= 0x1b; // Corresponds to the irreducible polynomial x^8 + x^4 + x^3 + x + 1
-        }
+        let mask_b = (b & 1).wrapping_neg();
+        p ^= a & mask_b;
+        let mask_carry = (a >> 7).wrapping_neg();
+        a = (a << 1) ^ (0x1b & mask_carry);
         b >>= 1;
     }
     p
@@ -28,26 +22,22 @@ fn gf256_multiply_const_time(a: u8, b: u8) -> u8 {
 
 /// Constant-time inverse calculation in GF(2^8)
 ///
-/// Uses Fermat's Little Theorem: a^(p-2) = a^254 in GF(2^8)
-/// This is slower but secure against side-channel attacks.
+/// Uses Fermat's Little Theorem: a^(p-2) = a^254 in GF(2^8).
+/// Evaluated via a fixed-length straight-line addition chain with zero data-dependent branches.
 #[inline]
 fn gf256_inverse_const_time(a: u8) -> u8 {
-    if a == 0 {
-        return 0;
-    }
-
-    let mut result = 1u8;
-    let mut base = a;
-    let mut exp = 254u32;
-
-    while exp > 0 {
-        if exp & 1 == 1 {
-            result = gf256_multiply_const_time(result, base);
-        }
-        base = gf256_multiply_const_time(base, base);
-        exp >>= 1;
-    }
-    result
+    // Fixed addition chain for a^254 (11 multiplications, straight line)
+    let a2 = gf256_multiply_const_time(a, a);
+    let a3 = gf256_multiply_const_time(a2, a);
+    let a6 = gf256_multiply_const_time(a3, a3);
+    let a12 = gf256_multiply_const_time(a6, a6);
+    let a14 = gf256_multiply_const_time(a12, a2);
+    let a15 = gf256_multiply_const_time(a14, a);
+    let a30 = gf256_multiply_const_time(a15, a15);
+    let a60 = gf256_multiply_const_time(a30, a30);
+    let a120 = gf256_multiply_const_time(a60, a60);
+    let a240 = gf256_multiply_const_time(a120, a120);
+    gf256_multiply_const_time(a240, a14)
 }
 
 /// Galois Field (GF(256)) arithmetic implementation
@@ -101,7 +91,7 @@ impl FiniteField {
         Self(gf256_multiply_const_time(self.0, other.0))
     }
 
-    /// Computes exponentiation in GF(256) using square-and-multiply
+    /// Computes exponentiation in GF(256) using a branchless square-and-multiply algorithm
     ///
     /// # Example
     /// ```
@@ -114,10 +104,11 @@ impl FiniteField {
     pub fn exp(self, mut exp: u32) -> Self {
         let mut result = FiniteField::new(1);
         let mut base = self;
-        while exp > 0 {
-            if exp & 1 == 1 {
-                result = result.multiply(base);
-            }
+        for _ in 0..32 {
+            let bit = (exp & 1) as u8;
+            let mask = bit.wrapping_neg();
+            let mult = result.multiply(base);
+            result = Self((mult.0 & mask) | (result.0 & !mask));
             base = base.multiply(base);
             exp >>= 1;
         }
@@ -160,25 +151,22 @@ impl Add for FiniteField {
     }
 }
 
-/// Implements multiplication using carryless algorithm
+/// Implements subtraction as XOR in GF(2⁸)
+impl Sub for FiniteField {
+    type Output = Self;
+    #[inline]
+    fn sub(self, other: Self) -> Self {
+        // In GF(2^8), subtraction is the same as addition (XOR)
+        self.add(other)
+    }
+}
+
+/// Implements multiplication in GF(2⁸)
 impl Mul for FiniteField {
     type Output = Self;
     #[inline]
     fn mul(self, other: Self) -> Self {
         self.multiply(other)
-    }
-}
-
-impl Sub for FiniteField {
-    type Output = Self;
-
-    #[inline]
-    fn sub(self, other: Self) -> Self {
-        // In GF(2^8), addition and subtraction are the same operation (XOR)
-        // This is mathematically correct, not a suspicious operation
-        #[allow(clippy::suspicious_arithmetic_impl)]
-        let result = self.add(other);
-        result
     }
 }
 
@@ -191,6 +179,13 @@ mod tests {
         let a = FiniteField::new(0x53);
         let b = FiniteField::new(0xCA);
         assert_eq!((a + b).0, 0x99);
+    }
+
+    #[test]
+    fn test_subtraction() {
+        let a = FiniteField::new(0x53);
+        let b = FiniteField::new(0xCA);
+        assert_eq!((a - b).0, (a + b).0);
     }
 
     #[test]
@@ -251,16 +246,18 @@ mod tests {
 
     #[test]
     fn test_distributivity() {
-        let a = FiniteField::new(0x12);
-        let b = FiniteField::new(0x34);
-        let c = FiniteField::new(0x56);
+        let a = FiniteField::new(0x53);
+        let b = FiniteField::new(0xCA);
+        let c = FiniteField::new(0x7B);
         assert_eq!(a * (b + c), (a * b) + (a * c));
     }
 
     #[test]
-    fn test_identity() {
-        let one = FiniteField::new(1);
-        let value = FiniteField::new(0xAB);
-        assert_eq!(value * one, value);
+    fn test_exp() {
+        let a = FiniteField::new(0x03);
+        assert_eq!(a.exp(0), FiniteField::new(1));
+        assert_eq!(a.exp(1), a);
+        assert_eq!(a.exp(2), a * a);
+        assert_eq!(a.exp(3), a * a * a);
     }
 }

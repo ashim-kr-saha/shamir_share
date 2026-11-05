@@ -6,10 +6,12 @@
 //!
 //! ## Security Features
 //!
-//! - **Constant-time GF(2^8) arithmetic** - No lookup tables, resistant to cache-timing attacks
-//! - **Cryptographically secure random generation** - Uses ChaCha20Rng seeded from SysRng  
-//! - **Integrity verification** - SHA-256 hash checking with constant-time comparison
-//! - **Memory safety** - Written in safe Rust with zero unsafe blocks
+//! - **Constant-time GF(2^8) arithmetic** - Eliminates lookup tables and secret-dependent branches to prevent cache-timing attacks
+//! - **Cryptographically secure random generation** - Uses `ChaCha20Rng` seeded from system entropy (`SysRng`)
+//! - **Corruption detection** - SHA-256 digest verification with constant-time comparison (`subtle::ConstantTimeEq`) to detect accidental bit-rot and stream truncation (unkeyed; note that unkeyed hashes detect corruption rather than providing cryptographic authenticity against active adversaries possessing $\ge k$ shares)
+//! - **Atomic storage** - Shares are persisted via atomic temporary-file-and-rename with `0o600` permissions on Unix
+//! - **Memory hygiene** - Optional `zeroize` feature securely clears sensitive buffers and polynomial coefficients on drop
+//! - **Memory safety** - Written in safe Rust with zero unsafe blocks (`#![forbid(unsafe_code)]`)
 //!
 //! # Quick Start
 //!
@@ -61,6 +63,8 @@
 //! assert_eq!(reconstructed, secret);
 //! ```
 
+#![forbid(unsafe_code)]
+
 mod config;
 mod error;
 mod finite_field;
@@ -79,7 +83,7 @@ pub use storage::{FileShareStore, ShareStore};
 pub mod prelude {
     pub use super::{
         AccessLevel, Config, Dealer, FileShareStore, HierarchicalShare, Hsss, HsssBuilder, Result,
-        ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareView, ShareStore, SplitMode,
+        ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareStore, ShareView, SplitMode,
     };
 }
 
@@ -131,15 +135,20 @@ mod tests {
         let mut store = FileShareStore::new(temp_dir.path())?;
 
         // Create a custom configuration
-        let _config = Config::new()
+        #[allow(unused_mut)]
+        let mut config = Config::new()
             .with_chunk_size(1024)?
             .with_mode(SplitMode::Sequential)
-            .with_compression(true)
             .with_integrity_check(true);
+
+        #[cfg(feature = "compress")]
+        {
+            config = config.with_compression(true);
+        }
 
         // Create and split secret
         let secret = b"Secret data with custom configuration";
-        let mut shamir = ShamirShare::builder(5, 3).build()?;
+        let mut shamir = ShamirShare::builder(5, 3).with_config(config).build()?;
         let shares = shamir.split(secret)?;
 
         // Store and reconstruct

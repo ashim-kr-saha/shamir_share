@@ -13,7 +13,7 @@ fn test_streaming_end_to_end() {
         .unwrap();
 
     // Create mock source data: 5KB vector with pattern [1, 2, 3, 4, 5] repeated
-    let source_data = vec![1, 2, 3, 4, 5].repeat(1024); // This creates a 5KB vector
+    let source_data = [1, 2, 3, 4, 5].repeat(1024); // This creates a 5KB vector
     let mut source = Cursor::new(source_data.clone());
 
     // Split Stream

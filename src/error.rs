@@ -2,13 +2,14 @@ use std::io;
 use thiserror::Error;
 
 /// Error type for Shamir's Secret Sharing operations
+#[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum ShamirError {
-    /// Invalid threshold value (must be 1 <= threshold <= total_shares)
+    /// Invalid threshold value (must be 2 <= threshold <= total_shares)
     #[error("Invalid threshold value {0}")]
     InvalidThreshold(u8),
 
-    /// Invalid total shares count (must be >= 1)
+    /// Invalid total shares count (must be >= 2)
     #[error("Invalid share count {0}")]
     InvalidShareCount(u8),
 
@@ -20,7 +21,7 @@ pub enum ShamirError {
     #[error("Need at least {needed} shares, got {got}")]
     InsufficientShares { needed: u8, got: u8 },
 
-    /// Invalid share index requested
+    /// Invalid share index requested (must be non-zero)
     #[error("Invalid share index {0}")]
     InvalidShareIndex(u8),
 
@@ -40,19 +41,25 @@ pub enum ShamirError {
     #[error("Inconsistent share lengths")]
     InconsistentShareLength,
 
-    #[cfg(feature = "compress")]
+    /// Compression error
     #[error("Compression error: {0}")]
     CompressionError(String),
 
-    #[cfg(feature = "compress")]
+    /// Decompression error
     #[error("Decompression error: {0}")]
     DecompressionError(String),
 
+    /// Invalid configuration
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
+    /// Storage error
     #[error("Storage error: {0}")]
     StorageError(String),
+
+    /// Secure random number generator failure
+    #[error("RNG error: {0}")]
+    RngError(String),
 }
 
 pub type Result<T> = std::result::Result<T, ShamirError>;

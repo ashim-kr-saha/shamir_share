@@ -18,11 +18,14 @@ A secure and efficient Rust library for Shamir's Secret Sharing, built with a se
   - Lazy iterator-based share generation with `Dealer` for memory efficiency
   - Support for up to 255 shares (GF(256) field limitation)
 - **Strong Security Features:**
-  - Secure random number generation using `ChaCha20Rng`
-  - Constant-time cryptographic operations to prevent side-channel attacks
-  - SHA-256 integrity verification of reconstructed secrets
-  - Magic number and version checks for share file format
-  - Comprehensive fuzzing for robustness testing
+  - Secure random number generation using `ChaCha20Rng` seeded from system entropy (`SysRng`)
+  - Branch-free constant-time cryptographic operations to prevent side-channel attacks
+  - SHA-256 integrity verification with constant-time equality comparisons (`subtle::ConstantTimeEq`)
+  - Atomic share persistence with temporary files and restricted `0o600` permissions on Unix
+  - Memory zeroization on drop (via `zeroize` feature)
+  - Zero unsafe code (`#![forbid(unsafe_code)]`)
+  - Magic number, format versioning, and length caps on untrusted inputs
+  - Comprehensive fuzzing suite for storage, stream, and memory reconstruction
 - **Performance & Usability:**
   - Zero-copy operations for efficient memory usage
   - Streaming support for large files
@@ -36,7 +39,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-shamir_share = "0.1.0"
+shamir_share = "0.2.2"
 ```
 
 ## Quick Start
@@ -105,7 +108,7 @@ let secret = b"This is a secret message";
 let shares = shamir.split(secret)?;
 
 // Store shares in a directory
-let store = FileShareStore::new(Path::new("/path/to/shares"))?;
+let mut store = FileShareStore::new(Path::new("/path/to/shares"))?;
 for share in &shares {
     store.store_share(share)?;
 }
@@ -127,23 +130,26 @@ This library is designed with security as the primary concern, implementing mult
 ### Cryptographic Security Guarantees
 
 - **Constant-Time GF(2^8) Arithmetic**: All finite field operations use constant-time algorithms with no lookup tables, preventing cache-timing side-channel attacks
-- **Resistant to Side-Channel Attacks**: Russian Peasant Multiplication and Fermat's Little Theorem for inversion ensure consistent execution time regardless of input values
-- **Cryptographically Secure Random Number Generation**: Uses `ChaCha20Rng` seeded from `OsRng` for polynomial coefficient generation
-- **Integrity Checking**: SHA-256 hash verification with constant-time comparison prevents tampering detection
-- **No Information Leakage**: Individual shares reveal no information about the secret without meeting the threshold
+- **Resistant to Side-Channel Attacks**: Branch-free Russian Peasant Multiplication and Fermat's Little Theorem for inversion ensure consistent execution time regardless of input values
+- **Cryptographically Secure Random Number Generation**: Uses `ChaCha20Rng` seeded from system entropy (`SysRng`) for polynomial coefficient generation
+- **Corruption Detection**: SHA-256 hash verification with constant-time comparison (`subtle::ConstantTimeEq`) detects bit-rot, corruption, and stream truncation
+- **Information-Theoretic Secrecy**: Individual shares reveal no information about the secret without meeting the threshold
 
 ### Implementation Security Features
 
-- **Memory Safety**: Written in Rust with zero unsafe code blocks
-- **Constant-Time Hash Comparison**: Prevents timing attacks during integrity verification
-- **Secure Share Format**: Magic numbers and version checks prevent format confusion attacks
-- **Parallel Processing**: Uses Rayon for safe parallel computation without compromising security
+- **Memory Safety**: Written in safe Rust with `#![forbid(unsafe_code)]`
+- **Memory Hygiene**: Secret buffers and polynomial coefficients are securely zeroized on drop
+- **Constant-Time Comparison**: Prevents timing attacks during digest verification
+- **Atomic Storage**: Atomic temporary-file-and-rename prevents partial writes on crash or power failure, with `0o600` permissions on Unix
+- **Secure Share Format**: Magic numbers, explicit versioning, and bounded allocation caps prevent format confusion and OOM DoS attacks
+- **Safe Concurrency**: Uses Rayon for safe parallel computation without compromising security
 
 ### Security Considerations for Users
 
-- **Share Distribution**: Distribute and store shares in different physical locations
+- **Integrity vs. Authenticity**: The built-in SHA-256 verification detects accidental bit-rot, corruption, and stream framing desynchronization. Because it is unkeyed, it does not provide cryptographic authenticity against active adversaries possessing $\ge k$ shares who could recompute valid hashes. If protection against active malicious share holders or MITM modification is required, shares should be authenticated using digital signatures or authenticated encryption (AEAD).
+- **Share Distribution**: Distribute and store shares in physically and administratively separate locations
 - **Access Control**: Implement proper access controls for share storage locations
-- **Network Security**: Use secure channels when transmitting shares over networks
+- **Network Security**: Use secure, encrypted channels (e.g. TLS, SSH) when transmitting shares over networks
 
 ### Security-Performance Tradeoff
 
@@ -212,7 +218,7 @@ The fuzzing targets test:
 ./run_streaming_benchmarks.sh
 
 # Compare with baseline
-cargo run --release --bin performance_compare
+cargo run --release --example performance_compare
 ```
 
 ## Contributing

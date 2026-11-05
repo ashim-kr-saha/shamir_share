@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use shamir_share::{Share, ShamirShare};
+use shamir_share::{ShamirShare, Share};
 
 // Fuzzing target for ShamirShare::reconstruct method
 //
@@ -40,7 +40,8 @@ fuzz_target!(|data: &[u8]| {
         let threshold = data[offset + 1];
         let total_shares = data[offset + 2];
         let integrity_check = data[offset + 3] & 1 == 1;
-        
+        let compression = (data[offset + 3] & 2) != 0;
+
         // Extract data length (limit to reasonable size for fuzzing performance)
         let data_len = ((data[offset + 4] as usize) << 8 | data[offset + 5] as usize).min(1000);
         offset += 6;
@@ -57,13 +58,14 @@ fuzz_target!(|data: &[u8]| {
         offset += data_len;
 
         // Create share with potentially invalid parameters
-        let share = Share {
+        let share = Share::new(
             index,
-            data: share_data,
+            share_data,
             threshold,
             total_shares,
             integrity_check,
-        };
+            compression,
+        );
 
         shares.push(share);
     }

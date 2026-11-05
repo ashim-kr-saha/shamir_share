@@ -130,10 +130,7 @@ fn test_streaming_integrity_check_failure() {
     }
 
     // Convert corrupted data back to readers
-    let mut share_readers: Vec<_> = share_data
-        .into_iter()
-        .map(|data| Cursor::new(data))
-        .collect();
+    let mut share_readers: Vec<_> = share_data.into_iter().map(Cursor::new).collect();
 
     // Attempt to reconstruct with the tampered share
     let mut reconstructed_writer = Cursor::new(Vec::new());

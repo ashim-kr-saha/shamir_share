@@ -12,7 +12,7 @@ cargo bench --bench streaming_benchmarks
 
 echo ""
 echo "2. Running comparison with existing benchmarks..."
-cargo bench --bench shamir_benchmarks
+cargo bench --bench in_memory_benchmarks
 
 echo ""
 echo "3. Running basic benchmarks..."

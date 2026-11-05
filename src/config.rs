@@ -1,9 +1,11 @@
 use crate::error::{Result, ShamirError};
 
 /// Processing mode for share operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SplitMode {
     /// Process data sequentially
+    #[default]
     Sequential,
     /// Process data in parallel
     Parallel,
@@ -11,13 +13,8 @@ pub enum SplitMode {
     Streaming,
 }
 
-impl Default for SplitMode {
-    fn default() -> Self {
-        Self::Sequential
-    }
-}
-
 /// Configuration options for splitting and reconstruction
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Size of chunks to process at once
@@ -41,6 +38,9 @@ impl Default for Config {
     }
 }
 
+/// Maximum allowed chunk size for streaming and configuration (64 MiB)
+pub const MAX_CONFIG_CHUNK_SIZE: usize = 64 * 1024 * 1024;
+
 impl Config {
     /// Creates a new configuration with default values
     pub fn new() -> Self {
@@ -49,10 +49,10 @@ impl Config {
 
     /// Sets the chunk size
     pub fn with_chunk_size(mut self, size: usize) -> Result<Self> {
-        if size == 0 {
-            return Err(ShamirError::InvalidConfig(
-                "Chunk size cannot be zero".into(),
-            ));
+        if size == 0 || size > MAX_CONFIG_CHUNK_SIZE {
+            return Err(ShamirError::InvalidConfig(format!(
+                "Chunk size must be between 1 and {MAX_CONFIG_CHUNK_SIZE} bytes"
+            )));
         }
         self.chunk_size = size;
         Ok(self)
@@ -65,7 +65,6 @@ impl Config {
     }
 
     /// Enables or disables compression
-    #[cfg(feature = "compress")]
     pub fn with_compression(mut self, enabled: bool) -> Self {
         self.compression = enabled;
         self
@@ -79,9 +78,16 @@ impl Config {
 
     /// Validates the configuration
     pub fn validate(&self) -> Result<()> {
-        if self.chunk_size == 0 {
+        if self.chunk_size == 0 || self.chunk_size > MAX_CONFIG_CHUNK_SIZE {
+            return Err(ShamirError::InvalidConfig(format!(
+                "Chunk size must be between 1 and {MAX_CONFIG_CHUNK_SIZE} bytes"
+            )));
+        }
+
+        #[cfg(not(feature = "compress"))]
+        if self.compression {
             return Err(ShamirError::InvalidConfig(
-                "Chunk size cannot be zero".into(),
+                "Compression requested but crate was compiled without 'compress' feature".into(),
             ));
         }
 
@@ -104,20 +110,16 @@ mod tests {
 
     #[test]
     fn test_config_builder() {
-        let mut config = Config::new()
+        let config = Config::new()
             .with_chunk_size(4096)
             .unwrap()
             .with_mode(SplitMode::Parallel)
+            .with_compression(true)
             .with_integrity_check(false);
-
-        #[cfg(feature = "compress")]
-        {
-            config = config.with_compression(true);
-            assert!(config.compression);
-        }
 
         assert_eq!(config.chunk_size, 4096);
         assert_eq!(config.mode, SplitMode::Parallel);
+        assert!(config.compression);
         assert!(!config.integrity_check);
     }
 

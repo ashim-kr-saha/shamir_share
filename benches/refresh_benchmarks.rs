@@ -17,9 +17,11 @@ fn bench_refresh_shares(c: &mut Criterion) {
 
     for &share_count in SHARE_COUNTS {
         let secret = create_test_secret();
-        
+
         // Create shares to refresh (using threshold = share_count for maximum work)
-        let mut shamir = ShamirShare::builder(share_count as u8, share_count as u8).build().unwrap();
+        let mut shamir = ShamirShare::builder(share_count as u8, share_count as u8)
+            .build()
+            .unwrap();
         let shares = shamir.split(&secret).unwrap();
 
         group.bench_with_input(
@@ -40,15 +42,17 @@ fn bench_refresh_shares(c: &mut Criterion) {
 /// Benchmark refresh_shares with varying data sizes (fixed share count)
 fn bench_refresh_shares_data_size(c: &mut Criterion) {
     let mut group = c.benchmark_group("refresh_shares_data_size");
-    
+
     // Use fixed share count but vary data size
     const SHARE_COUNT: u8 = 50;
     const DATA_SIZES: &[usize] = &[256, 1024, 4096, 16384]; // 256B to 16KB
 
     for &data_size in DATA_SIZES {
         let secret: Vec<u8> = (0..data_size).map(|i| (i % 256) as u8).collect();
-        
-        let mut shamir = ShamirShare::builder(SHARE_COUNT, SHARE_COUNT).build().unwrap();
+
+        let mut shamir = ShamirShare::builder(SHARE_COUNT, SHARE_COUNT)
+            .build()
+            .unwrap();
         let shares = shamir.split(&secret).unwrap();
 
         group.bench_with_input(
@@ -69,11 +73,13 @@ fn bench_refresh_shares_data_size(c: &mut Criterion) {
 /// Benchmark to compare refresh_shares vs split performance
 fn bench_refresh_vs_split(c: &mut Criterion) {
     let mut group = c.benchmark_group("refresh_vs_split");
-    
+
     const SHARE_COUNT: u8 = 100;
     let secret = create_test_secret();
-    
-    let mut shamir = ShamirShare::builder(SHARE_COUNT, SHARE_COUNT).build().unwrap();
+
+    let mut shamir = ShamirShare::builder(SHARE_COUNT, SHARE_COUNT)
+        .build()
+        .unwrap();
     let shares = shamir.split(&secret).unwrap();
 
     group.bench_function("split_100_shares", |b| {

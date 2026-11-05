@@ -17,7 +17,7 @@ fn main() {
 
     for &size in &test_sizes {
         println!("Data size: {} KB", size / 1024);
-        println!("-".repeat(40));
+        println!("{}", "-".repeat(40));
 
         let data = create_test_data(size);
 

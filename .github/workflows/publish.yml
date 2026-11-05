@@ -23,6 +23,13 @@ jobs:
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
+      # Run test suite before publishing
+      - name: Run tests (all features)
+        run: cargo test --all-features
+
+      - name: Run tests (no default features)
+        run: cargo test --no-default-features
+
       # The actual publish step
       - name: Publish to crates.io
         env:
