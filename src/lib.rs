@@ -40,7 +40,7 @@
 //!     store.load_share(3).unwrap(),
 //! ];
 //! let reconstructed = ShamirShare::reconstruct(&loaded_shares).unwrap();
-//! assert_eq!(reconstructed, secret);
+//! assert_eq!(reconstructed.as_slice(), secret);
 //! ```
 //!
 //! ## Lazy Share Generation with Dealer
@@ -60,22 +60,26 @@
 //!     .collect();
 //!
 //! let reconstructed = ShamirShare::reconstruct(&shares).unwrap();
-//! assert_eq!(reconstructed, secret);
+//! assert_eq!(reconstructed.as_slice(), secret);
 //! ```
 
 #![forbid(unsafe_code)]
 
 #[cfg(feature = "zeroize")]
-pub(crate) use zeroize::Zeroizing;
+pub use zeroize::Zeroizing;
 
 #[cfg(not(feature = "zeroize"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Zeroizing<T>(pub T);
+pub struct Zeroizing<T>(pub T);
 
 #[cfg(not(feature = "zeroize"))]
 impl<T> Zeroizing<T> {
     pub fn new(val: T) -> Self {
         Self(val)
+    }
+
+    pub fn into_inner(self) -> T {
+        self.0
     }
 }
 
@@ -113,6 +117,7 @@ pub mod prelude {
     pub use super::{
         AccessLevel, Config, Dealer, FileShareStore, HierarchicalShare, Hsss, HsssBuilder, Result,
         ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareStore, ShareView, SplitMode,
+        Zeroizing,
     };
 }
 
@@ -153,7 +158,7 @@ mod tests {
 
         // Reconstruct the secret
         let reconstructed = ShamirShare::reconstruct(&reconstruction_shares)?;
-        assert_eq!(&reconstructed, secret);
+        assert_eq!(reconstructed.as_slice(), secret);
 
         Ok(())
     }
@@ -191,7 +196,7 @@ mod tests {
         }
 
         let reconstructed = ShamirShare::reconstruct(&loaded_shares)?;
-        assert_eq!(&reconstructed, secret);
+        assert_eq!(reconstructed.as_slice(), secret);
 
         Ok(())
     }

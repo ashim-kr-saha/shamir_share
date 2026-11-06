@@ -172,7 +172,9 @@ fn bench_streaming_vs_memory_comparison(c: &mut Criterion) {
             let mut destination = Vec::new();
             let mut dest_cursor = Cursor::new(&mut destination);
 
-            ShamirShare::reconstruct_stream(&mut sources, &mut dest_cursor).unwrap();
+            scheme
+                .reconstruct_stream_with_scheme(&mut sources, &mut dest_cursor)
+                .unwrap();
 
             black_box(destination);
         });
@@ -262,7 +264,9 @@ fn bench_streaming_integrity_check(c: &mut Criterion) {
             let mut destination = Vec::new();
             let mut dest_cursor = Cursor::new(&mut destination);
 
-            ShamirShare::reconstruct_stream(&mut sources, &mut dest_cursor).unwrap();
+            scheme
+                .reconstruct_stream_with_scheme(&mut sources, &mut dest_cursor)
+                .unwrap();
 
             black_box(destination);
         });
@@ -298,7 +302,9 @@ fn bench_streaming_integrity_check(c: &mut Criterion) {
             let mut destination = Vec::new();
             let mut dest_cursor = Cursor::new(&mut destination);
 
-            ShamirShare::reconstruct_stream(&mut sources, &mut dest_cursor).unwrap();
+            scheme
+                .reconstruct_stream_with_scheme(&mut sources, &mut dest_cursor)
+                .unwrap();
 
             black_box(destination);
         });

@@ -57,7 +57,7 @@ fn test_f02_reconstruct_with_scheme_enforces_policy() {
 
     // 3. Valid reconstruction with scheme
     let reconstructed = scheme.reconstruct_with_scheme(&shares[0..3]).unwrap();
-    assert_eq!(reconstructed, b"sensitive payload");
+    assert_eq!(reconstructed.as_slice(), b"sensitive payload");
 }
 
 #[test]

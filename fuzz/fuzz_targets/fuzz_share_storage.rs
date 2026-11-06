@@ -97,7 +97,7 @@ fuzz_target!(|data: &[u8]| {
         if let Ok(mut file) = File::create(&truncated_path) {
             // Write a header that claims more data than we provide
             let _ = file.write_all(b"SHS1"); // Magic
-            let _ = file.write_all(&[2]); // Version 2
+            let _ = file.write_all(&[3]); // Version 3
             let _ = file.write_all(&[1]); // Flags: integrity_check = true
             let _ = file.write_all(&[5, 3, 5]); // index=5, threshold=3, total_shares=5
             let _ = file.write_all(&[255u8, 255u8, 255u8, 255u8]); // Large data length
@@ -112,7 +112,7 @@ fuzz_target!(|data: &[u8]| {
         let corrupted_path = temp_dir.path().join("share_006");
         if let Ok(mut file) = File::create(&corrupted_path) {
             let _ = file.write_all(&data[0..4]); // Corrupted magic
-            let _ = file.write_all(&[2]); // Version 2
+            let _ = file.write_all(&[3]); // Version 3
             let _ = file.write_all(&[1]); // Flags
             let _ = file.write_all(&[6, 3, 5]); // index=6, threshold=3, total_shares=5
             let _ = file.write_all(&[5u8, 0u8, 0u8, 0u8]); // Data length = 5
@@ -142,7 +142,7 @@ fuzz_target!(|data: &[u8]| {
         let mismatched_path = temp_dir.path().join("share_008");
         if let Ok(mut file) = File::create(&mismatched_path) {
             let _ = file.write_all(b"SHS1"); // Correct magic
-            let _ = file.write_all(&[2]); // Correct version
+            let _ = file.write_all(&[3]); // Correct version
             let _ = file.write_all(&[1]); // Flags
             let _ = file.write_all(&[99, 3, 5]); // index=99 (doesn't match filename), threshold=3, total_shares=5
             let _ = file.write_all(&[5u8, 0u8, 0u8, 0u8]); // Data length = 5
@@ -157,7 +157,7 @@ fuzz_target!(|data: &[u8]| {
         let large_length_path = temp_dir.path().join("share_009");
         if let Ok(mut file) = File::create(&large_length_path) {
             let _ = file.write_all(b"SHS1"); // Correct magic
-            let _ = file.write_all(&[2]); // Correct version
+            let _ = file.write_all(&[3]); // Correct version
             let _ = file.write_all(&[1]); // Flags
             let _ = file.write_all(&[9, 3, 5]); // index=9, threshold=3, total_shares=5
             let _ = file.write_all(&[255u8, 255u8, 255u8, 255u8]); // Maximum u32 data length
@@ -172,7 +172,7 @@ fuzz_target!(|data: &[u8]| {
         let zero_length_path = temp_dir.path().join("share_010");
         if let Ok(mut file) = File::create(&zero_length_path) {
             let _ = file.write_all(b"SHS1"); // Correct magic
-            let _ = file.write_all(&[2]); // Correct version
+            let _ = file.write_all(&[3]); // Correct version
             let _ = file.write_all(&[1]); // Flags
             let _ = file.write_all(&[10, 3, 5]); // index=10, threshold=3, total_shares=5
             let _ = file.write_all(&[0u8, 0u8, 0u8, 0u8]); // Data length = 0

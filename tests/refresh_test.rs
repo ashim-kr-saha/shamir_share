@@ -18,7 +18,7 @@ fn test_refreshed_shares_reconstruct_correctly() {
     let reconstructed_secret = ShamirShare::reconstruct(&refreshed_shares[0..3]).unwrap();
 
     // Assert that the reconstructed secret is identical to the original
-    assert_eq!(&reconstructed_secret, secret);
+    assert_eq!(reconstructed_secret.as_slice(), secret);
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn test_mixing_old_and_new_shares_fails_reconstruction_no_integrity() {
     // Even without integrity checking, the reconstruction should produce
     // incorrect data (not matching the original secret)
     if let Ok(reconstructed) = result {
-        assert_ne!(&reconstructed, secret);
+        assert_ne!(reconstructed.as_slice(), secret);
     } else {
         // Or it might fail with some other error, which is also acceptable
         assert!(result.is_err());
@@ -250,10 +250,10 @@ fn test_multiple_refresh_rounds() {
     let reconstructed_v3 = ShamirShare::reconstruct(&shares_v3[0..3]).unwrap();
     let reconstructed_v4 = ShamirShare::reconstruct(&shares_v4[0..3]).unwrap();
 
-    assert_eq!(&reconstructed_v1, secret);
-    assert_eq!(&reconstructed_v2, secret);
-    assert_eq!(&reconstructed_v3, secret);
-    assert_eq!(&reconstructed_v4, secret);
+    assert_eq!(reconstructed_v1.as_slice(), secret);
+    assert_eq!(reconstructed_v2.as_slice(), secret);
+    assert_eq!(reconstructed_v3.as_slice(), secret);
+    assert_eq!(reconstructed_v4.as_slice(), secret);
 
     // But all share data should be different
     assert_ne!(shares_v1[0].data, shares_v2[0].data);

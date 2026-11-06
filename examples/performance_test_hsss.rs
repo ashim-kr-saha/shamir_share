@@ -39,5 +39,8 @@ fn main() {
     let reconstruct_duration = start.elapsed();
 
     println!("Reconstruct time: {:?}", reconstruct_duration);
-    println!("Reconstruction successful: {}", reconstructed == secret);
+    println!(
+        "Reconstruction successful: {}",
+        reconstructed.as_slice() == secret.as_slice()
+    );
 }

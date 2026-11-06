@@ -221,3 +221,181 @@ fn test_f13_streaming_rejects_trailing_bytes_after_eos() {
     let res = scheme.reconstruct_stream_with_scheme(&mut readers, &mut out);
     assert!(matches!(res, Err(ShamirError::InvalidShareFormat)));
 }
+
+#[test]
+fn test_mas01_stream_excess_sources_bounded_memory() {
+    // 25 sources claiming 64 MiB chunk must fail on EOF without allocating multi-GiB
+    let mut headers = Vec::new();
+    let stream_id = [0x55u8; 16];
+    let max_chunk: u32 = 64 * 1024 * 1024;
+
+    for i in 1..=25 {
+        let mut s = Vec::new();
+        s.extend_from_slice(b"SHS_STR\x02");
+        s.extend_from_slice(&stream_id);
+        s.extend_from_slice(&[1, i as u8, 2, 25]); // flags=1, index=i, threshold=2, total=25
+        s.extend_from_slice(&max_chunk.to_le_bytes()); // Claims 64 MiB chunk
+        headers.push(Cursor::new(s));
+    }
+
+    let mut dest = Vec::new();
+    let res = ShamirShare::reconstruct_stream(&mut headers, &mut dest);
+    // Should fail cleanly on unexpected EOF during block reading without OOM abort
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_mas02_unauthenticated_shares_rejected_by_default() {
+    let scheme = ShamirShare::builder(3, 2)
+        .with_config(shamir_share::Config::new().with_integrity_check(false))
+        .build()
+        .unwrap();
+
+    let shares = scheme.split(b"unauthenticated data").unwrap();
+
+    // Static parameterless reconstruct MUST reject unauthenticated shares
+    assert!(matches!(
+        ShamirShare::reconstruct(&shares[0..2]),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Reconstruct with explicit scheme succeeds
+    let reconstructed = scheme.reconstruct_with_scheme(&shares[0..2]).unwrap();
+    assert_eq!(reconstructed.as_slice(), b"unauthenticated data");
+}
+
+#[test]
+fn test_mas03_bounded_coefficient_allocation() {
+    let scheme = ShamirShare::builder(255, 255).build().unwrap();
+    // 1 MiB secret * 254 = ~254 MiB coefficients, which exceeds MAX_CONFIG_CHUNK_SIZE (64 MiB)
+    let large_secret = vec![0x42u8; 1024 * 1024];
+    let res = scheme.try_dealer(&large_secret);
+    assert!(matches!(res, Err(ShamirError::InvalidConfig(_))));
+}
+
+#[test]
+fn test_mas04_hmac_authentication_key_tamper_detection() {
+    let key1 = [0x42u8; 32];
+    let key2 = [0x99u8; 32];
+
+    let scheme1 = ShamirShare::builder(3, 2)
+        .with_config(
+            shamir_share::Config::new()
+                .with_integrity_check(true)
+                .with_authentication_key(key1),
+        )
+        .build()
+        .unwrap();
+
+    let secret = b"authenticated with HMAC key";
+    let shares = scheme1.split(secret).unwrap();
+
+    // Reconstruct with matching key succeeds
+    let reconstructed = scheme1.reconstruct_with_scheme(&shares[0..2]).unwrap();
+    assert_eq!(reconstructed.as_slice(), secret);
+
+    // Reconstruct with wrong key fails integrity check
+    let scheme2 = ShamirShare::builder(3, 2)
+        .with_config(
+            shamir_share::Config::new()
+                .with_integrity_check(true)
+                .with_authentication_key(key2),
+        )
+        .build()
+        .unwrap();
+    let res_wrong_key = scheme2.reconstruct_with_scheme(&shares[0..2]);
+    assert!(matches!(
+        res_wrong_key,
+        Err(ShamirError::IntegrityCheckFailed)
+    ));
+
+    // Reconstruct without scheme fails (unauthenticated / missing key)
+    let res_no_scheme = ShamirShare::reconstruct(&shares[0..2]);
+    assert!(matches!(
+        res_no_scheme,
+        Err(ShamirError::IntegrityCheckFailed)
+    ));
+}
+
+#[test]
+fn test_mas06_reconstruction_returns_zeroizing() {
+    let scheme = ShamirShare::builder(3, 2).build().unwrap();
+    let secret = b"zeroized secret payload";
+    let shares = scheme.split(secret).unwrap();
+
+    let reconstructed: shamir_share::Zeroizing<Vec<u8>> =
+        ShamirShare::reconstruct(&shares[0..2]).unwrap();
+    assert_eq!(reconstructed.as_slice(), secret);
+}
+
+#[test]
+fn test_mas07_hsss_duplicate_level_names_and_index_binding() {
+    // Duplicate level names rejected
+    let res = Hsss::builder(5)
+        .add_level("Admin", 3)
+        .add_level("Admin", 2)
+        .build();
+    assert!(matches!(res, Err(ShamirError::InvalidConfig(_))));
+
+    // Index range binding: share with index outside assigned range rejected
+    let mut hsss = Hsss::builder(5)
+        .add_level("Level1", 3) // range 1..=3
+        .add_level("Level2", 2) // range 4..=5
+        .build()
+        .unwrap();
+
+    let mut shares = hsss.split_secret(b"hsss secret").unwrap();
+    // Swap share index: put share from level 2 (index 4) into level 1
+    shares[0].shares[0].index = 4;
+    let res_forged = hsss.reconstruct(&shares[0..1]);
+    assert!(matches!(res_forged, Err(ShamirError::InvalidShareFormat)));
+}
+
+#[test]
+fn test_mas09_compression_without_integrity_rejected() {
+    let _config = shamir_share::Config::new().with_integrity_check(false);
+
+    #[cfg(feature = "compress")]
+    {
+        let config_compressed = _config.with_compression(true);
+        let res = ShamirShare::builder(3, 2)
+            .with_config(config_compressed)
+            .build();
+        assert!(matches!(res, Err(ShamirError::InvalidConfig(_))));
+    }
+
+    #[cfg(not(feature = "compress"))]
+    {
+        // When compress feature is off, with_compression returns InvalidConfig
+        let res = shamir_share::Config::new().with_compression(true);
+        let res_build = ShamirShare::builder(3, 2).with_config(res).build();
+        assert!(matches!(res_build, Err(ShamirError::InvalidConfig(_))));
+    }
+}
+
+#[test]
+fn test_mas10_file_share_store_symlink_base_dir_and_secure_delete() {
+    let temp = tempdir().unwrap();
+    let real_dir = temp.path().join("real_dir");
+    std::fs::create_dir_all(&real_dir).unwrap();
+
+    #[cfg(unix)]
+    {
+        let symlink_dir = temp.path().join("symlink_dir");
+        std::os::unix::fs::symlink(&real_dir, &symlink_dir).unwrap();
+
+        // Initializing FileShareStore with a symlinked base_dir MUST be rejected
+        let res = FileShareStore::new(&symlink_dir);
+        assert!(matches!(res, Err(ShamirError::InvalidShareFormat)));
+    }
+
+    // Secure file overwrite on delete_share
+    let mut store = FileShareStore::new(&real_dir).unwrap();
+    let share = Share::new(1, vec![0xAA; 100], 2, 3, true, false);
+    store.store_share(&share).unwrap();
+    assert!(store.load_share(1).is_ok());
+
+    // delete_share cleans up the file
+    store.delete_share(1).unwrap();
+    assert!(store.load_share(1).is_err());
+}

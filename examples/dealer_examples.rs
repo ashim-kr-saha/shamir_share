@@ -20,7 +20,10 @@ fn main() {
 
     // Verify reconstruction
     let reconstructed = ShamirShare::reconstruct(&shares).unwrap();
-    println!("Reconstruction successful: {}", reconstructed == secret);
+    println!(
+        "Reconstruction successful: {}",
+        reconstructed.as_slice() == secret
+    );
     println!();
 
     // Demo 2: Lazy evaluation - generate shares one by one
@@ -57,7 +60,7 @@ fn main() {
     let reconstructed = ShamirShare::reconstruct(&even_shares).unwrap();
     println!(
         "Reconstruction with even shares successful: {}",
-        reconstructed == secret
+        reconstructed.as_slice() == secret
     );
     println!();
 
@@ -75,7 +78,7 @@ fn main() {
 
     println!(
         "Both methods produce equivalent results: {}",
-        reconstructed_split == reconstructed_dealer && reconstructed_split == secret
+        reconstructed_split == reconstructed_dealer && reconstructed_split.as_slice() == secret
     );
     println!();
 

@@ -58,9 +58,15 @@ fn test_split_with_integrity_check_disabled() {
         assert_eq!(share.data.len(), secret.len());
     }
 
-    // Reconstruct the secret from the shares and assert that it matches the original
-    let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
-    assert_eq!(&reconstructed, secret);
+    // Reconstruct without scheme is rejected (MAS-02)
+    assert!(matches!(
+        ShamirShare::reconstruct(&shares[0..3]),
+        Err(shamir_share::ShamirError::InvalidShareFormat)
+    ));
+
+    // Reconstruct with explicit scheme matches the original
+    let reconstructed = shamir.reconstruct_with_scheme(&shares[0..3]).unwrap();
+    assert_eq!(reconstructed.as_slice(), secret);
 }
 
 #[test]
@@ -83,5 +89,5 @@ fn test_split_with_integrity_check_enabled() {
 
     // Reconstruct the secret and assert it matches
     let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
-    assert_eq!(&reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 }

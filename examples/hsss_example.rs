@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Reconstructed: {:?}",
         std::str::from_utf8(&reconstructed).unwrap()
     );
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 
     // Scenario 2: VP and Executive collaborate
     println!("\n--- Scenario 2: VP + Executive ---");
@@ -43,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Reconstructed: {:?}",
         std::str::from_utf8(&reconstructed).unwrap()
     );
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 
     // Scenario 3: VP alone (should fail)
     println!("\n--- Scenario 3: VP alone (should fail) ---");

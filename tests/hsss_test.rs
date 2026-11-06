@@ -23,7 +23,7 @@ fn test_president_can_reconstruct_alone() {
     let reconstructed = hsss
         .reconstruct(std::slice::from_ref(president_shares))
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn test_vp_and_executive_can_reconstruct() {
     let reconstructed = hsss
         .reconstruct(&[vp_shares.clone(), executive_shares.clone()])
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn test_two_vps_can_reconstruct() {
     let reconstructed = hsss
         .reconstruct(&[vp1_shares.clone(), vp2_shares.clone()])
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 }
 
 #[test]
@@ -213,7 +213,7 @@ fn test_vp_executive_and_contractor_can_reconstruct() {
             contractor_shares.clone(),
         ])
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn test_all_levels_can_reconstruct() {
 
     // Test: All levels together = 5 + 3 + 2 + 1 = 11 shares >= threshold of 5
     let reconstructed = hsss.reconstruct(&all_h_shares).unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn test_edge_case_exact_threshold() {
     let reconstructed = hsss
         .reconstruct(std::slice::from_ref(manager_shares))
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 
     // Test: All three employees together can reconstruct (1 + 1 + 1 = 3 shares = threshold of 3)
     let employee1_shares = &all_h_shares[1];
@@ -268,7 +268,7 @@ fn test_edge_case_exact_threshold() {
             employee3_shares.clone(),
         ])
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 
     // Test: Only two employees cannot reconstruct (1 + 1 = 2 shares < threshold of 3)
     let result = hsss.reconstruct(&[employee1_shares.clone(), employee2_shares.clone()]);
@@ -298,7 +298,7 @@ fn test_complex_hierarchy() {
     // Test: CEO alone can reconstruct (7 shares = threshold of 7)
     let ceo_shares = &all_h_shares[0];
     let reconstructed = hsss.reconstruct(std::slice::from_ref(ceo_shares)).unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 
     // Test: CTO + Manager1 can reconstruct (4 + 3 = 7 shares = threshold of 7)
     let cto_shares = &all_h_shares[1];
@@ -306,7 +306,7 @@ fn test_complex_hierarchy() {
     let reconstructed = hsss
         .reconstruct(&[cto_shares.clone(), manager1_shares.clone()])
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 
     // Test: CTO + Manager2 + Employee1 can reconstruct (4 + 2 + 1 = 7 shares = threshold of 7)
     let manager2_shares = &all_h_shares[3];
@@ -318,7 +318,7 @@ fn test_complex_hierarchy() {
             employee1_shares.clone(),
         ])
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 
     // Test: All managers and employees together can reconstruct (3 + 2 + 1 + 1 + 1 = 8 shares >= threshold of 7)
     let employee2_shares = &all_h_shares[5];
@@ -332,7 +332,7 @@ fn test_complex_hierarchy() {
             employee3_shares.clone(),
         ])
         .unwrap();
-    assert_eq!(reconstructed, secret);
+    assert_eq!(reconstructed.as_slice(), secret);
 
     // Test: CTO alone cannot reconstruct (4 shares < threshold of 7)
     let result = hsss.reconstruct(std::slice::from_ref(cto_shares));

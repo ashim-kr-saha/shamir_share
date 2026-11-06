@@ -6,7 +6,7 @@ default:
 
 # Run all tests with logging enabled
 test:
-    RUST_LOG=info cargo test --release -- --test-threads=1
+    RUST_LOG=info cargo test --release --locked -- --test-threads=1
 
 # Run tests with coverage report
 coverage:
@@ -15,7 +15,7 @@ coverage:
 
 # Run benchmarks
 bench:
-    cargo bench
+    cargo bench --locked
 
 bench-streaming:
     cargo bench --bench streaming_benchmarks
@@ -127,11 +127,11 @@ update:
 
 # Run security checks
 security-check: audit security-scan
-    cargo deny check advisories
+    cargo deny check
 
 # Generate and view documentation with examples
 docs-with-examples: docs
-    cargo test --doc
+    cargo test --doc --locked
     open target/doc/shamir_share/index.html
 
 # Run all CI checks
@@ -142,9 +142,11 @@ release version:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Creating release {{version}}"
-    cargo test
-    cargo clippy -- -D warnings
+    git diff --quiet && git diff --cached --quiet || { echo "Working tree is dirty"; exit 1; }
+    grep -q '^version = "{{version}}"' Cargo.toml || { echo "Cargo.toml version mismatch with release version {{version}}"; exit 1; }
+    cargo test --locked
+    cargo clippy --all-targets --all-features --locked -- -D warnings
     cargo fmt -- --check
-    cargo build --release
+    cargo build --release --locked
     git tag -a v{{version}} -m "Release {{version}}"
     echo "Release v{{version}} created"

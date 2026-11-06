@@ -1,3 +1,4 @@
+use crate::Zeroizing;
 use crate::error::{Result, ShamirError};
 
 /// Processing mode for share operations
@@ -25,6 +26,8 @@ pub struct Config {
     integrity_check: bool,
     /// Maximum cumulative decompressed bytes allowed for a stream
     max_decompressed_stream_size: Option<u64>,
+    /// Optional 256-bit authentication key for HMAC-based share authentication
+    authentication_key: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl Default for Config {
@@ -35,6 +38,7 @@ impl Default for Config {
             compression: false,
             integrity_check: true,
             max_decompressed_stream_size: None,
+            authentication_key: None,
         }
     }
 }
@@ -81,6 +85,12 @@ impl Config {
         self.max_decompressed_stream_size
     }
 
+    /// Returns the configured authentication key, if set
+    #[inline]
+    pub fn authentication_key(&self) -> Option<&[u8; 32]> {
+        self.authentication_key.as_deref()
+    }
+
     /// Sets the chunk size
     pub fn with_chunk_size(mut self, size: usize) -> Result<Self> {
         if size == 0 || size > MAX_CONFIG_CHUNK_SIZE {
@@ -122,12 +132,28 @@ impl Config {
         self
     }
 
+    /// Configures an optional caller-held 256-bit authentication key
+    ///
+    /// When set, shares and stream chunks are authenticated with HMAC-SHA256
+    /// using this key, preventing any adversary who accesses $k$ shares from
+    /// substituting secrets or truncating streams without possessing the key.
+    pub fn with_authentication_key(mut self, key: [u8; 32]) -> Self {
+        self.authentication_key = Some(Zeroizing::new(key));
+        self
+    }
+
     /// Validates the configuration
     pub fn validate(&self) -> Result<()> {
         if self.chunk_size == 0 || self.chunk_size > MAX_CONFIG_CHUNK_SIZE {
             return Err(ShamirError::InvalidConfig(format!(
                 "Chunk size must be between 1 and {MAX_CONFIG_CHUNK_SIZE} bytes"
             )));
+        }
+
+        if self.compression && !self.integrity_check {
+            return Err(ShamirError::InvalidConfig(
+                "Compression cannot be enabled without integrity checking".into(),
+            ));
         }
 
         #[cfg(not(feature = "compress"))]
@@ -172,5 +198,16 @@ mod tests {
     #[test]
     fn test_invalid_config() {
         assert!(Config::new().with_chunk_size(0).is_err());
+        let bad_compression = Config::new()
+            .with_compression(true)
+            .with_integrity_check(false);
+        assert!(bad_compression.validate().is_err());
+    }
+
+    #[test]
+    fn test_authentication_key_config() {
+        let key = [42u8; 32];
+        let config = Config::new().with_authentication_key(key);
+        assert_eq!(config.authentication_key(), Some(&key));
     }
 }

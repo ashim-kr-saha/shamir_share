@@ -90,23 +90,35 @@ impl FileShareStore {
         #[cfg(unix)]
         {
             use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-            if base_dir.exists() {
-                let metadata = fs::metadata(&base_dir)?;
-                let current_mode = metadata.permissions().mode();
-                if current_mode & 0o077 != 0 {
-                    let mut perms = metadata.permissions();
-                    perms.set_mode(current_mode & !0o077);
-                    fs::set_permissions(&base_dir, perms)?;
+            let sym_meta = fs::symlink_metadata(&base_dir);
+            match sym_meta {
+                Ok(meta) => {
+                    if meta.file_type().is_symlink() {
+                        return Err(ShamirError::InvalidShareFormat);
+                    }
+                    let current_mode = meta.permissions().mode();
+                    if current_mode & 0o077 != 0 {
+                        let mut perms = meta.permissions();
+                        perms.set_mode(current_mode & !0o077);
+                        fs::set_permissions(&base_dir, perms)?;
+                    }
                 }
-            } else {
-                let mut builder = fs::DirBuilder::new();
-                builder.recursive(true);
-                builder.mode(0o700);
-                builder.create(&base_dir)?;
+                Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
+                    let mut builder = fs::DirBuilder::new();
+                    builder.recursive(true);
+                    builder.mode(0o700);
+                    builder.create(&base_dir)?;
+                }
+                Err(e) => return Err(e.into()),
             }
         }
         #[cfg(not(unix))]
         {
+            if let Ok(meta) = fs::symlink_metadata(&base_dir) {
+                if meta.file_type().is_symlink() {
+                    return Err(ShamirError::InvalidShareFormat);
+                }
+            }
             fs::create_dir_all(&base_dir)?;
         }
 
@@ -219,13 +231,17 @@ impl ShareStore for FileShareStore {
                 e.into()
             }
         })?;
-        if !sym_meta.is_file() {
+        if sym_meta.file_type().is_symlink() || !sym_meta.is_file() {
             return Err(ShamirError::InvalidShareFormat);
         }
 
         let mut file = File::open(&path)?;
+        let file_meta = file.metadata()?;
+        if !file_meta.is_file() {
+            return Err(ShamirError::InvalidShareFormat);
+        }
 
-        let file_len = file.metadata()?.len();
+        let file_len = file_meta.len();
         if file_len < HEADER_SIZE {
             return Err(ShamirError::InvalidShareFormat);
         }
@@ -319,6 +335,22 @@ impl ShareStore for FileShareStore {
 
     fn delete_share(&mut self, index: u8) -> Result<()> {
         let path = self.share_path(index);
+        // Securely overwrite share file data before unlinking to prevent disk residue
+        if let Ok(mut file) = fs::OpenOptions::new().write(true).open(&path) {
+            if let Ok(meta) = file.metadata() {
+                let len = meta.len();
+                let zeroes = [0u8; 4096];
+                let mut written = 0;
+                while written < len {
+                    let to_write = (len - written).min(zeroes.len() as u64) as usize;
+                    if file.write_all(&zeroes[..to_write]).is_err() {
+                        break;
+                    }
+                    written += to_write as u64;
+                }
+                let _ = file.sync_all();
+            }
+        }
         fs::remove_file(path).map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
                 ShamirError::ShareNotFound(index)
@@ -486,7 +518,7 @@ mod tests {
         let fake_path = temp_dir.path().join("share_001");
         {
             let mut file = File::create(&fake_path)?;
-            file.write_all(b"SHS1\x02\x01\x01\x03\x05\xff\xff\xff\xff")?;
+            file.write_all(b"SHS1\x03\x01\x01\x03\x05\xff\xff\xff\xff")?;
         }
         assert!(matches!(
             store.load_share(1),
@@ -506,7 +538,7 @@ mod tests {
         // 3. Zero index
         {
             let mut file = File::create(&fake_path)?;
-            file.write_all(b"SHS1\x02\x00\x00\x03\x05\x01\x00\x00\x00\xaa")?;
+            file.write_all(b"SHS1\x03\x00\x00\x03\x05\x01\x00\x00\x00\xaa")?;
         }
         assert!(matches!(
             store.load_share(1),
@@ -516,7 +548,7 @@ mod tests {
         // 4. Threshold < 2
         {
             let mut file = File::create(&fake_path)?;
-            file.write_all(b"SHS1\x02\x00\x01\x01\x05\x01\x00\x00\x00\xaa")?;
+            file.write_all(b"SHS1\x03\x00\x01\x01\x05\x01\x00\x00\x00\xaa")?;
         }
         assert!(matches!(
             store.load_share(1),
@@ -526,7 +558,7 @@ mod tests {
         // 5. Trailing garbage bytes
         {
             let mut file = File::create(&fake_path)?;
-            file.write_all(b"SHS1\x02\x00\x01\x02\x05\x01\x00\x00\x00\xaaEXTRA_GARBAGE")?;
+            file.write_all(b"SHS1\x03\x00\x01\x02\x05\x01\x00\x00\x00\xaaEXTRA_GARBAGE")?;
         }
         assert!(matches!(
             store.load_share(1),
@@ -536,7 +568,7 @@ mod tests {
         // 6. Stored index > total_shares
         {
             let mut file = File::create(&fake_path)?;
-            file.write_all(b"SHS1\x02\x00\x01\x02\x00\x01\x00\x00\x00\xaa")?;
+            file.write_all(b"SHS1\x03\x00\x01\x02\x00\x01\x00\x00\x00\xaa")?;
         }
         assert!(matches!(
             store.load_share(1),
