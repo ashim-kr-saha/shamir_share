@@ -54,16 +54,20 @@ case $TARGET in
     reconstruct)
         run_target "fuzz_reconstruct" "$DURATION"
         ;;
+    stream)
+        run_target "fuzz_reconstruct_stream" "$DURATION"
+        ;;
     storage)
         run_target "fuzz_share_storage" "$DURATION"
         ;;
     all)
         run_target "fuzz_reconstruct" "$DURATION"
+        run_target "fuzz_reconstruct_stream" "$DURATION"
         run_target "fuzz_share_storage" "$DURATION"
         ;;
     *)
         echo "Unknown target: $TARGET"
-        echo "Available targets: reconstruct, storage, all"
+        echo "Available targets: reconstruct, stream, storage, all"
         exit 1
         ;;
 esac

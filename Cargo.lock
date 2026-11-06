@@ -626,12 +626,11 @@ dependencies = [
 
 [[package]]
 name = "shamir_share"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "criterion",
  "rand",
  "rand_chacha",
- "rand_core",
  "rayon",
  "sha2",
  "subtle",

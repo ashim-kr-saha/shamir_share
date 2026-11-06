@@ -9,8 +9,6 @@ pub enum SplitMode {
     Sequential,
     /// Process data in parallel
     Parallel,
-    /// Process data in streaming mode
-    Streaming,
 }
 
 /// Configuration options for splitting and reconstruction
@@ -18,13 +16,13 @@ pub enum SplitMode {
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Size of chunks to process at once
-    pub chunk_size: usize,
+    chunk_size: usize,
     /// Processing mode
-    pub mode: SplitMode,
+    mode: SplitMode,
     /// Whether to compress data
-    pub compression: bool,
+    compression: bool,
     /// Whether to perform integrity checks
-    pub integrity_check: bool,
+    integrity_check: bool,
 }
 
 impl Default for Config {
@@ -47,6 +45,30 @@ impl Config {
         Self::default()
     }
 
+    /// Returns the configured chunk size
+    #[inline]
+    pub fn chunk_size(&self) -> usize {
+        self.chunk_size
+    }
+
+    /// Returns the configured split mode
+    #[inline]
+    pub fn mode(&self) -> SplitMode {
+        self.mode
+    }
+
+    /// Returns whether compression is enabled
+    #[inline]
+    pub fn compression(&self) -> bool {
+        self.compression
+    }
+
+    /// Returns whether integrity checking is enabled
+    #[inline]
+    pub fn integrity_check(&self) -> bool {
+        self.integrity_check
+    }
+
     /// Sets the chunk size
     pub fn with_chunk_size(mut self, size: usize) -> Result<Self> {
         if size == 0 || size > MAX_CONFIG_CHUNK_SIZE {
@@ -65,6 +87,12 @@ impl Config {
     }
 
     /// Enables or disables compression
+    ///
+    /// # Security Warning
+    /// Compression is **not** constant-time. Compressed size and execution time depend directly
+    /// on secret entropy and repeated patterns, which can leak information about the secret
+    /// through side channels (e.g. CRIME/BREACH style length leaks). Do not enable compression
+    /// for secrets where length or entropy leaks pose a security risk.
     pub fn with_compression(mut self, enabled: bool) -> Self {
         self.compression = enabled;
         self
@@ -102,10 +130,10 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.mode, SplitMode::Sequential);
-        assert_eq!(config.chunk_size, 1024 * 1024);
-        assert!(!config.compression);
-        assert!(config.integrity_check);
+        assert_eq!(config.mode(), SplitMode::Sequential);
+        assert_eq!(config.chunk_size(), 1024 * 1024);
+        assert!(!config.compression());
+        assert!(config.integrity_check());
     }
 
     #[test]
@@ -117,10 +145,10 @@ mod tests {
             .with_compression(true)
             .with_integrity_check(false);
 
-        assert_eq!(config.chunk_size, 4096);
-        assert_eq!(config.mode, SplitMode::Parallel);
-        assert!(config.compression);
-        assert!(!config.integrity_check);
+        assert_eq!(config.chunk_size(), 4096);
+        assert_eq!(config.mode(), SplitMode::Parallel);
+        assert!(config.compression());
+        assert!(!config.integrity_check());
     }
 
     #[test]

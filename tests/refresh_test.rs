@@ -11,8 +11,8 @@ fn test_refreshed_shares_reconstruct_correctly() {
     // Split the secret into initial shares
     let original_shares = shamir.split(secret).unwrap();
 
-    // Refresh the shares using a valid subset (we need at least threshold shares)
-    let refreshed_shares = shamir.refresh_shares(&original_shares[0..3]).unwrap();
+    // Refresh all shares (must provide all total_shares)
+    let refreshed_shares = shamir.refresh_shares(&original_shares).unwrap();
 
     // Take a valid subset of the refreshed shares and reconstruct
     let reconstructed_secret = ShamirShare::reconstruct(&refreshed_shares[0..3]).unwrap();
@@ -32,20 +32,20 @@ fn test_refreshed_shares_are_different_from_original() {
     // Split the secret into initial shares
     let original_shares = shamir.split(secret).unwrap();
 
-    // Refresh the shares
-    let refreshed_shares = shamir.refresh_shares(&original_shares[0..3]).unwrap();
+    // Refresh all shares
+    let refreshed_shares = shamir.refresh_shares(&original_shares).unwrap();
 
     // Assert that the data field of the first original share is not equal to
     // the data field of the first refreshed share
     assert_ne!(original_shares[0].data, refreshed_shares[0].data);
 
     // Also verify that all corresponding shares have different data
-    for i in 0..3 {
+    for i in 0..5 {
         assert_ne!(original_shares[i].data, refreshed_shares[i].data);
     }
 
     // But verify that metadata is preserved
-    for i in 0..3 {
+    for i in 0..5 {
         assert_eq!(original_shares[i].index, refreshed_shares[i].index);
         assert_eq!(original_shares[i].threshold, refreshed_shares[i].threshold);
         assert_eq!(
@@ -70,8 +70,8 @@ fn test_mixing_old_and_new_shares_fails_reconstruction() {
     // Split the secret into initial shares (shares_v1)
     let shares_v1 = shamir.split(secret).unwrap();
 
-    // Refresh them to get new shares (shares_v2)
-    let shares_v2 = shamir.refresh_shares(&shares_v1[0..3]).unwrap();
+    // Refresh all shares to get new shares (shares_v2)
+    let shares_v2 = shamir.refresh_shares(&shares_v1).unwrap();
 
     // Create a mixed set of shares: two from v1 and one from v2
     let mixed_shares = vec![
@@ -114,8 +114,8 @@ fn test_mixing_old_and_new_shares_fails_reconstruction_no_integrity() {
     // Split the secret into initial shares
     let shares_v1 = shamir.split(secret).unwrap();
 
-    // Refresh them to get new shares
-    let shares_v2 = shamir.refresh_shares(&shares_v1[0..3]).unwrap();
+    // Refresh all shares to get new shares
+    let shares_v2 = shamir.refresh_shares(&shares_v1).unwrap();
 
     // Create a mixed set of shares
     let mixed_shares = vec![
@@ -138,8 +138,22 @@ fn test_mixing_old_and_new_shares_fails_reconstruction_no_integrity() {
 }
 
 #[test]
+fn test_partial_refresh_shares_fails() {
+    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let secret = b"Partial refresh should be rejected";
+    let shares = shamir.split(secret).unwrap();
+
+    // Passing threshold (3) shares instead of total_shares (5) must fail
+    let err = shamir.refresh_shares(&shares[0..3]).unwrap_err();
+    assert!(matches!(
+        err,
+        ShamirError::InsufficientShares { needed: 5, got: 3 }
+    ));
+}
+
+#[test]
 fn test_refresh_with_insufficient_shares_errors() {
-    // Create a scheme with threshold k=3
+    // Create a scheme with threshold k=3, total n=5
     let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Define a test secret
@@ -148,14 +162,14 @@ fn test_refresh_with_insufficient_shares_errors() {
     // Split the secret
     let shares = shamir.split(secret).unwrap();
 
-    // Call refresh_shares with only k-1 (i.e., 2) shares
+    // Call refresh_shares with only 2 shares
     let result = shamir.refresh_shares(&shares[0..2]);
 
     // Assert that the result is Err(ShamirError::InsufficientShares)
     assert!(result.is_err());
     match result.unwrap_err() {
         ShamirError::InsufficientShares { needed, got } => {
-            assert_eq!(needed, 3);
+            assert_eq!(needed, 5);
             assert_eq!(got, 2);
         }
         other => panic!("Expected InsufficientShares error, got: {:?}", other),
@@ -192,11 +206,11 @@ fn test_refresh_preserves_share_metadata() {
     // Split the secret
     let original_shares = shamir.split(secret).unwrap();
 
-    // Refresh a subset of shares
-    let refreshed_shares = shamir.refresh_shares(&original_shares[1..5]).unwrap();
+    // Refresh all shares
+    let refreshed_shares = shamir.refresh_shares(&original_shares).unwrap();
 
     // Verify that all metadata is preserved
-    for (original, refreshed) in original_shares[1..5].iter().zip(refreshed_shares.iter()) {
+    for (original, refreshed) in original_shares.iter().zip(refreshed_shares.iter()) {
         assert_eq!(original.index, refreshed.index);
         assert_eq!(original.threshold, refreshed.threshold);
         assert_eq!(original.total_shares, refreshed.total_shares);
@@ -222,13 +236,13 @@ fn test_multiple_refresh_rounds() {
     let shares_v1 = shamir.split(secret).unwrap();
 
     // First refresh
-    let shares_v2 = shamir.refresh_shares(&shares_v1[0..3]).unwrap();
+    let shares_v2 = shamir.refresh_shares(&shares_v1).unwrap();
 
     // Second refresh
-    let shares_v3 = shamir.refresh_shares(&shares_v2[0..3]).unwrap();
+    let shares_v3 = shamir.refresh_shares(&shares_v2).unwrap();
 
     // Third refresh
-    let shares_v4 = shamir.refresh_shares(&shares_v3[0..3]).unwrap();
+    let shares_v4 = shamir.refresh_shares(&shares_v3).unwrap();
 
     // All versions should reconstruct to the same secret
     let reconstructed_v1 = ShamirShare::reconstruct(&shares_v1[0..3]).unwrap();
@@ -251,18 +265,15 @@ fn test_multiple_refresh_rounds() {
 #[test]
 fn test_refresh_with_inconsistent_share_lengths() {
     // Create a ShamirShare instance
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
 
-    // Create shares with different data lengths manually
-    // This is a bit artificial since normal split() creates consistent shares,
-    // but we want to test the validation
     let secret1 = b"short";
     let secret2 = b"this is a much longer secret";
 
     let shares1 = shamir.split(secret1).unwrap();
     let shares2 = shamir.split(secret2).unwrap();
 
-    // Create a mixed set with inconsistent lengths
+    // Create a mixed set with inconsistent lengths (3 shares)
     let inconsistent_shares = vec![
         shares1[0].clone(), // Short data
         shares1[1].clone(), // Short data
@@ -280,4 +291,26 @@ fn test_refresh_with_inconsistent_share_lengths() {
         }
         other => panic!("Expected InconsistentShareLength error, got: {:?}", other),
     }
+}
+
+#[test]
+fn test_refresh_with_excess_shares_errors() {
+    let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+    let secret = b"excess shares test";
+    let mut shares = shamir.split(secret).unwrap();
+    shares.push(shares[0].clone());
+
+    let result = shamir.refresh_shares(&shares);
+    assert!(matches!(result, Err(ShamirError::InvalidShareFormat)));
+}
+
+#[test]
+fn test_refresh_with_index_out_of_bounds_errors() {
+    let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+    let secret = b"out of bounds index test";
+    let mut shares = shamir.split(secret).unwrap();
+    shares[2].index = 4; // total_shares is 3
+
+    let result = shamir.refresh_shares(&shares);
+    assert!(matches!(result, Err(ShamirError::InvalidShareIndex(4))));
 }

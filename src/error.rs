@@ -25,6 +25,10 @@ pub enum ShamirError {
     #[error("Invalid share index {0}")]
     InvalidShareIndex(u8),
 
+    /// Share with specified index was not found in storage
+    #[error("Share with index {0} not found")]
+    ShareNotFound(u8),
+
     /// General I/O error
     #[error("I/O error: {0}")]
     IoError(#[from] io::Error),

@@ -79,7 +79,7 @@ fuzz-storage:
 
 # Install development dependencies
 setup-dev:
-    cargo install cargo-audit cargo-tarpaulin cargo-fuzz cargo-watch just
+    cargo install cargo-audit cargo-tarpaulin cargo-fuzz cargo-watch cargo-deny just
 
 # Watch for changes and run tests
 watch:

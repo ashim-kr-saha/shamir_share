@@ -57,7 +57,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 ///     shares_count: 3,
 /// };
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub struct AccessLevel {
     /// Human-readable name for this access level (e.g., "President", "VP", "Executive")
@@ -83,7 +83,7 @@ pub struct AccessLevel {
 ///     shares: vec![], // Would contain actual Share objects
 /// };
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub struct HierarchicalShare {
     /// Name of the access level this share set belongs to
@@ -224,7 +224,7 @@ impl HsssBuilder {
     ///
     /// # Errors
     /// Returns `ShamirError` if:
-    /// - `master_threshold` is 0
+    /// - `master_threshold` is less than 2
     /// - No access levels have been defined
     /// - Total shares count is 0 or exceeds 255
     /// - `master_threshold` exceeds the total shares count
@@ -308,7 +308,7 @@ impl Hsss {
     /// a fluent interface for defining the hierarchical structure.
     ///
     /// # Arguments
-    /// * `master_threshold` - Minimum number of shares required for reconstruction (1-255)
+    /// * `master_threshold` - Minimum number of shares required for reconstruction (2-255)
     ///
     /// # Returns
     /// An `HsssBuilder` instance for configuring the hierarchy
@@ -562,15 +562,17 @@ impl Hsss {
     /// - Integrity verification (if enabled during splitting)
     /// - No information leakage about the secret with insufficient shares
     pub fn reconstruct(&self, hierarchical_shares: &[HierarchicalShare]) -> Result<Vec<u8>> {
-        // Flatten all shares from all hierarchical shares into a single vector
-        let mut all_shares = Vec::new();
+        // Collect borrowed ShareViews from all hierarchical shares without cloning share data
+        let mut all_views = Vec::new();
 
         for hierarchical_share in hierarchical_shares {
-            all_shares.extend_from_slice(&hierarchical_share.shares);
+            for share in &hierarchical_share.shares {
+                all_views.push(share.as_view());
+            }
         }
 
-        // Use the standard Shamir reconstruction method
-        ShamirShare::reconstruct(&all_shares)
+        // Use the zero-copy ShareView reconstruction method
+        ShamirShare::reconstruct_from_views(&all_views)
     }
 }
 

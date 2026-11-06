@@ -45,7 +45,6 @@ fuzz_target!(|data: &[u8]| {
         // Write fuzzer data to file
         if let Ok(mut file) = File::create(&share_path) {
             let _ = file.write_all(data);
-            let _ = file.sync_all();
         }
 
         // Attempt to load the share - this should never panic
@@ -67,7 +66,6 @@ fuzz_target!(|data: &[u8]| {
         let magic_path = temp_dir.path().join("share_002");
         if let Ok(mut file) = File::create(&magic_path) {
             let _ = file.write_all(&data[0..4]);
-            let _ = file.sync_all();
         }
         let _result = store.load_share(2);
         let _ = std::fs::remove_file(&magic_path);
@@ -78,7 +76,6 @@ fuzz_target!(|data: &[u8]| {
         let version_path = temp_dir.path().join("share_003");
         if let Ok(mut file) = File::create(&version_path) {
             let _ = file.write_all(&data[0..5]);
-            let _ = file.sync_all();
         }
         let _result = store.load_share(3);
         let _ = std::fs::remove_file(&version_path);
@@ -89,7 +86,6 @@ fuzz_target!(|data: &[u8]| {
         let header_path = temp_dir.path().join("share_004");
         if let Ok(mut file) = File::create(&header_path) {
             let _ = file.write_all(&data[0..8]);
-            let _ = file.sync_all();
         }
         let _result = store.load_share(4);
         let _ = std::fs::remove_file(&header_path);
@@ -106,7 +102,6 @@ fuzz_target!(|data: &[u8]| {
             let _ = file.write_all(&[5, 3, 5]); // index=5, threshold=3, total_shares=5
             let _ = file.write_all(&[255u8, 255u8, 255u8, 255u8]); // Large data length
             let _ = file.write_all(&data[0..data.len().min(100)]); // Limited actual data
-            let _ = file.sync_all();
         }
         let _result = store.load_share(5);
         let _ = std::fs::remove_file(&truncated_path);
@@ -122,7 +117,6 @@ fuzz_target!(|data: &[u8]| {
             let _ = file.write_all(&[6, 3, 5]); // index=6, threshold=3, total_shares=5
             let _ = file.write_all(&[5u8, 0u8, 0u8, 0u8]); // Data length = 5
             let _ = file.write_all(&data[4..data.len().min(9)]); // Some data
-            let _ = file.sync_all();
         }
         let _result = store.load_share(6);
         let _ = std::fs::remove_file(&corrupted_path);
@@ -138,7 +132,6 @@ fuzz_target!(|data: &[u8]| {
             let _ = file.write_all(&[7, 3, 5]); // index=7, threshold=3, total_shares=5
             let _ = file.write_all(&[5u8, 0u8, 0u8, 0u8]); // Data length = 5
             let _ = file.write_all(&data[1..data.len().min(6)]); // Some data
-            let _ = file.sync_all();
         }
         let _result = store.load_share(7);
         let _ = std::fs::remove_file(&wrong_version_path);
@@ -154,7 +147,6 @@ fuzz_target!(|data: &[u8]| {
             let _ = file.write_all(&[99, 3, 5]); // index=99 (doesn't match filename), threshold=3, total_shares=5
             let _ = file.write_all(&[5u8, 0u8, 0u8, 0u8]); // Data length = 5
             let _ = file.write_all(&data[0..data.len().min(5)]); // Some data
-            let _ = file.sync_all();
         }
         let _result = store.load_share(8); // Requesting index 8 but file contains index 99
         let _ = std::fs::remove_file(&mismatched_path);
@@ -170,7 +162,6 @@ fuzz_target!(|data: &[u8]| {
             let _ = file.write_all(&[9, 3, 5]); // index=9, threshold=3, total_shares=5
             let _ = file.write_all(&[255u8, 255u8, 255u8, 255u8]); // Maximum u32 data length
             let _ = file.write_all(&data[0..data.len().min(100)]); // Limited actual data
-            let _ = file.sync_all();
         }
         let _result = store.load_share(9);
         let _ = std::fs::remove_file(&large_length_path);
@@ -186,7 +177,6 @@ fuzz_target!(|data: &[u8]| {
             let _ = file.write_all(&[10, 3, 5]); // index=10, threshold=3, total_shares=5
             let _ = file.write_all(&[0u8, 0u8, 0u8, 0u8]); // Data length = 0
             let _ = file.write_all(&data[0..data.len().min(10)]); // Extra data that shouldn't be there
-            let _ = file.sync_all();
         }
         let _result = store.load_share(10);
         let _ = std::fs::remove_file(&zero_length_path);

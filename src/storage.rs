@@ -2,13 +2,16 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
+use rand::TryRng;
+use rand::rngs::SysRng;
+
 use crate::error::{Result, ShamirError};
 use crate::shamir::Share;
 
 const MAGIC_NUMBER: &[u8] = b"SHS1"; // Magic number for binary share format
 const VERSION: u8 = 2; // Version of the share format
 const HEADER_SIZE: u64 = 4 + 1 + 1 + 3 + 4; // magic(4) + ver(1) + flags(1) + meta(3) + len(4) = 13 bytes
-const MAX_SHARE_DATA_LEN: usize = 64 * 1024 * 1024; // 64 MiB limit for share data allocation
+const MAX_SHARE_DATA_LEN: usize = (64 * 1024 * 1024) + (256 * 1024) + 256;
 
 /// Trait defining storage operations for Shamir shares
 ///
@@ -96,22 +99,37 @@ impl FileShareStore {
 
 impl ShareStore for FileShareStore {
     fn store_share(&mut self, share: &Share) -> Result<()> {
-        if share.index == 0 {
-            return Err(ShamirError::InvalidShareIndex(0));
+        if share.index == 0 || share.index > share.total_shares {
+            return Err(ShamirError::InvalidShareIndex(share.index));
         }
         if share.threshold < 2 || share.threshold > share.total_shares {
             return Err(ShamirError::InvalidThreshold(share.threshold));
+        }
+        if share.data.len() > MAX_SHARE_DATA_LEN {
+            return Err(ShamirError::StorageError(format!(
+                "Share data length {} exceeds maximum allowed {} bytes",
+                share.data.len(),
+                MAX_SHARE_DATA_LEN
+            )));
         }
 
         let len = u32::try_from(share.data.len())
             .map_err(|_| ShamirError::StorageError("Share data exceeds u32::MAX".into()))?;
 
         let target_path = self.share_path(share.index);
-        let tmp_path = self.base_dir.join(format!(".share_{:03}.tmp", share.index));
+        let mut nonce = [0u8; 8];
+        SysRng
+            .try_fill_bytes(&mut nonce)
+            .map_err(|e| ShamirError::RngError(e.to_string()))?;
+        let tmp_path = self.base_dir.join(format!(
+            ".share_{:03}_{:016x}.tmp",
+            share.index,
+            u64::from_le_bytes(nonce)
+        ));
 
-        {
+        let write_res = (|| -> Result<()> {
             let mut options = fs::OpenOptions::new();
-            options.write(true).create(true).truncate(true);
+            options.write(true).create_new(true);
             #[cfg(unix)]
             {
                 use std::os::unix::fs::OpenOptionsExt;
@@ -140,9 +158,23 @@ impl ShareStore for FileShareStore {
                 .into_inner()
                 .map_err(|e| ShamirError::IoError(e.into_error()))?;
             inner_file.sync_all()?;
+            Ok(())
+        })();
+
+        if let Err(e) = write_res {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e);
         }
 
         fs::rename(&tmp_path, target_path)?;
+
+        #[cfg(unix)]
+        {
+            if let Ok(dir_file) = File::open(&self.base_dir) {
+                let _ = dir_file.sync_all();
+            }
+        }
+
         Ok(())
     }
 
@@ -154,7 +186,7 @@ impl ShareStore for FileShareStore {
         let path = self.share_path(index);
         let mut file = File::open(path).map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
-                ShamirError::InvalidShareIndex(index)
+                ShamirError::ShareNotFound(index)
             } else {
                 e.into()
             }
@@ -192,7 +224,12 @@ impl ShareStore for FileShareStore {
         let (stored_index, threshold, total_shares) = (header[0], header[1], header[2]);
 
         // Verify stored index matches requested index and invariants hold
-        if stored_index != index || stored_index == 0 || threshold < 2 || threshold > total_shares {
+        if stored_index != index
+            || stored_index == 0
+            || stored_index > total_shares
+            || threshold < 2
+            || threshold > total_shares
+        {
             return Err(ShamirError::InvalidShareFormat);
         }
 
@@ -245,11 +282,17 @@ impl ShareStore for FileShareStore {
         let path = self.share_path(index);
         fs::remove_file(path).map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
-                ShamirError::InvalidShareIndex(index)
+                ShamirError::ShareNotFound(index)
             } else {
                 e.into()
             }
         })?;
+        #[cfg(unix)]
+        {
+            if let Ok(dir_file) = File::open(&self.base_dir) {
+                let _ = dir_file.sync_all();
+            }
+        }
         Ok(())
     }
 }
@@ -302,13 +345,13 @@ mod tests {
         // Try to load non-existent share
         assert!(matches!(
             store.load_share(1),
-            Err(ShamirError::InvalidShareIndex(1))
+            Err(ShamirError::ShareNotFound(1))
         ));
 
         // Try to delete non-existent share
         assert!(matches!(
             store.delete_share(1),
-            Err(ShamirError::InvalidShareIndex(1))
+            Err(ShamirError::ShareNotFound(1))
         ));
     }
 
@@ -371,6 +414,13 @@ mod tests {
         let mut perms = fs::metadata(temp_dir.path()).unwrap().permissions();
         perms.set_readonly(true);
         fs::set_permissions(temp_dir.path(), perms).unwrap();
+
+        // Check if write permissions were actually revoked (handles Windows, root containers, etc.)
+        let probe_file = temp_dir.path().join(".probe_ro");
+        if File::create(&probe_file).is_ok() {
+            let _ = fs::remove_file(&probe_file);
+            return;
+        }
 
         let mut store = FileShareStore::new(temp_dir.path()).unwrap();
         let share = Share {
@@ -442,6 +492,49 @@ mod tests {
         assert!(matches!(
             store.load_share(1),
             Err(ShamirError::InvalidShareFormat)
+        ));
+
+        // 6. Stored index > total_shares
+        {
+            let mut file = File::create(&fake_path)?;
+            file.write_all(b"SHS1\x02\x00\x01\x02\x00\x01\x00\x00\x00\xaa")?;
+        }
+        assert!(matches!(
+            store.load_share(1),
+            Err(ShamirError::InvalidShareFormat)
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_store_share_index_bounds() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let mut store = FileShareStore::new(temp_dir.path())?;
+        let share_out_of_bounds = Share {
+            index: 6,
+            data: vec![1, 2, 3],
+            threshold: 3,
+            total_shares: 5,
+            integrity_check: true,
+            compression: false,
+        };
+        assert!(matches!(
+            store.store_share(&share_out_of_bounds),
+            Err(ShamirError::InvalidShareIndex(6))
+        ));
+
+        let share_zero_index = Share {
+            index: 0,
+            data: vec![1, 2, 3],
+            threshold: 3,
+            total_shares: 5,
+            integrity_check: true,
+            compression: false,
+        };
+        assert!(matches!(
+            store.store_share(&share_zero_index),
+            Err(ShamirError::InvalidShareIndex(0))
         ));
 
         Ok(())

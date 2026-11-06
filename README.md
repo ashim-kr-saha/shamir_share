@@ -39,7 +39,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-shamir_share = "0.2.2"
+shamir_share = "0.3.0"
 ```
 
 ## Quick Start
@@ -80,10 +80,11 @@ let mut scheme = ShamirShare::builder(10, 5).build().unwrap();
 let secret = b"my secret data";
 
 // Generate only the shares you need
-let shares: Vec<_> = scheme.dealer(secret).take(5).collect();
+let shares: Vec<_> = scheme.try_dealer(secret).unwrap().take(5).collect();
 
 // Or use iterator methods for advanced filtering
-let even_shares: Vec<_> = scheme.dealer(secret)
+let even_shares: Vec<_> = scheme.try_dealer(secret)
+    .unwrap()
     .filter(|share| share.index % 2 == 0)
     .take(5)
     .collect();
@@ -100,27 +101,31 @@ assert_eq!(reconstructed, secret);
 use shamir_share::{ShamirShare, FileShareStore, ShareStore};
 use std::path::Path;
 
-// Create a new ShamirShare instance with 5 shares, threshold of 3
-let mut shamir = ShamirShare::builder(5, 3).build()?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create a new ShamirShare instance with 5 shares, threshold of 3
+    let mut shamir = ShamirShare::builder(5, 3).build()?;
 
-// Split a secret
-let secret = b"This is a secret message";
-let shares = shamir.split(secret)?;
+    // Split a secret
+    let secret = b"This is a secret message";
+    let shares = shamir.split(secret)?;
 
-// Store shares in a directory
-let mut store = FileShareStore::new(Path::new("/path/to/shares"))?;
-for share in &shares {
-    store.store_share(share)?;
+    // Store shares in a directory
+    let temp_dir = tempfile::tempdir()?;
+    let mut store = FileShareStore::new(temp_dir.path())?;
+    for share in &shares {
+        store.store_share(share)?;
+    }
+
+    // Later, reconstruct the secret using at least 3 shares
+    let mut reconstruction_shares = Vec::new();
+    for i in 1..=3 {
+        reconstruction_shares.push(store.load_share(i)?);
+    }
+
+    let reconstructed = ShamirShare::reconstruct(&reconstruction_shares)?;
+    assert_eq!(&reconstructed, secret);
+    Ok(())
 }
-
-// Later, reconstruct the secret using at least 3 shares
-let mut reconstruction_shares = Vec::new();
-for i in 1..=3 {
-    reconstruction_shares.push(store.load_share(i)?);
-}
-
-let reconstructed = ShamirShare::reconstruct(&reconstruction_shares)?;
-assert_eq!(&reconstructed, secret);
 ```
 
 ## Security
@@ -131,8 +136,8 @@ This library is designed with security as the primary concern, implementing mult
 
 - **Constant-Time GF(2^8) Arithmetic**: All finite field operations use constant-time algorithms with no lookup tables, preventing cache-timing side-channel attacks
 - **Resistant to Side-Channel Attacks**: Branch-free Russian Peasant Multiplication and Fermat's Little Theorem for inversion ensure consistent execution time regardless of input values
-- **Cryptographically Secure Random Number Generation**: Uses `ChaCha20Rng` seeded from system entropy (`SysRng`) for polynomial coefficient generation
-- **Corruption Detection**: SHA-256 hash verification with constant-time comparison (`subtle::ConstantTimeEq`) detects bit-rot, corruption, and stream truncation
+- **Cryptographically Secure Random Number Generation**: Uses `ChaCha20Rng` reseeded from system entropy (`SysRng`) on each split/refresh operation
+- **Corruption Detection**: SHA-256 hash verification with constant-time comparison (`subtle::ConstantTimeEq`) detects bit-rot, corruption, and stream framing desynchronization
 - **Information-Theoretic Secrecy**: Individual shares reveal no information about the secret without meeting the threshold
 
 ### Implementation Security Features
@@ -140,13 +145,14 @@ This library is designed with security as the primary concern, implementing mult
 - **Memory Safety**: Written in safe Rust with `#![forbid(unsafe_code)]`
 - **Memory Hygiene**: Secret buffers and polynomial coefficients are securely zeroized on drop
 - **Constant-Time Comparison**: Prevents timing attacks during digest verification
-- **Atomic Storage**: Atomic temporary-file-and-rename prevents partial writes on crash or power failure, with `0o600` permissions on Unix
+- **Atomic Storage**: Atomic temporary-file-and-rename with random nonce prevents partial writes on crash or power failure, with `0o600` permissions on Unix
 - **Secure Share Format**: Magic numbers, explicit versioning, and bounded allocation caps prevent format confusion and OOM DoS attacks
 - **Safe Concurrency**: Uses Rayon for safe parallel computation without compromising security
 
 ### Security Considerations for Users
 
-- **Integrity vs. Authenticity**: The built-in SHA-256 verification detects accidental bit-rot, corruption, and stream framing desynchronization. Because it is unkeyed, it does not provide cryptographic authenticity against active adversaries possessing $\ge k$ shares who could recompute valid hashes. If protection against active malicious share holders or MITM modification is required, shares should be authenticated using digital signatures or authenticated encryption (AEAD).
+- **Corruption Detection vs. Authenticity**: The built-in SHA-256 verification detects accidental bit-rot, corruption, and stream framing desynchronization. Because Shamir's Secret Sharing is linear over $GF(2^8)$, an unkeyed hash inside the shared payload does *not* protect against active tampering even by a single malicious share holder (or a network adversary modifying one share) if the underlying plaintext is known or predictable. For authenticity against active attackers, shares should be authenticated using digital signatures or authenticated encryption (AEAD).
+- **Compression Side-Channel Warning**: Optional `zstd` compression is not constant-time and produces variable-length shares that leak plaintext entropy and size. Do not enable compression when protecting small, fixed-entropy secrets like cryptographic keys.
 - **Share Distribution**: Distribute and store shares in physically and administratively separate locations
 - **Access Control**: Implement proper access controls for share storage locations
 - **Network Security**: Use secure, encrypted channels (e.g. TLS, SSH) when transmitting shares over networks

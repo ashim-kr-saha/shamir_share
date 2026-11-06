@@ -92,3 +92,26 @@ fn test_streaming_with_compression() {
 
     assert_eq!(&destination, data);
 }
+
+#[test]
+fn test_decompression_bomb_rejected() {
+    use shamir_share::ShamirError;
+
+    // Create a payload that decompresses to > 64 MiB
+    // 65 MiB of zeros compresses to under 100 KB with zstd
+    let large_zeros = vec![0u8; 65 * 1024 * 1024];
+    let compressed_bomb = zstd::encode_all(&large_zeros[..], 1).unwrap();
+
+    let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+    let mut bomb_shares = shamir.split(&compressed_bomb).unwrap();
+
+    // Re-label shares as having compression: true
+    for s in bomb_shares.iter_mut() {
+        s.compression = true;
+    }
+
+    // Reconstruction must reject payloads exceeding 64 MiB with DecompressionError
+    let result = ShamirShare::reconstruct(&bomb_shares[0..2]);
+    assert!(result.is_err());
+    assert!(matches!(result, Err(ShamirError::DecompressionError(_))));
+}

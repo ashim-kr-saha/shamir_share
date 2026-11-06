@@ -1,4 +1,5 @@
 use std::ops::{Add, Mul, Sub};
+use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
@@ -11,10 +12,10 @@ use zeroize::Zeroize;
 fn gf256_multiply_const_time(mut a: u8, mut b: u8) -> u8 {
     let mut p: u8 = 0;
     for _ in 0..8 {
-        let mask_b = (b & 1).wrapping_neg();
-        p ^= a & mask_b;
-        let mask_carry = (a >> 7).wrapping_neg();
-        a = (a << 1) ^ (0x1b & mask_carry);
+        let bit_b = Choice::from(b & 1);
+        p ^= u8::conditional_select(&0, &a, bit_b);
+        let carry = Choice::from((a >> 7) & 1);
+        a = (a << 1) ^ u8::conditional_select(&0, &0x1b, carry);
         b >>= 1;
     }
     p
@@ -42,7 +43,7 @@ fn gf256_inverse_const_time(a: u8) -> u8 {
 
 /// Galois Field (GF(256)) arithmetic implementation
 ///
-/// Represents elements in GF(2⁸) using irreducible polynomial x⁸ + x⁴ + x³ + x + 1 (0x11B)
+/// Represents elements in GF(2^8) using irreducible polynomial x^8 + x^4 + x^3 + x + 1 (0x11B)
 ///
 /// # Example
 /// ```
@@ -105,10 +106,9 @@ impl FiniteField {
         let mut result = FiniteField::new(1);
         let mut base = self;
         for _ in 0..32 {
-            let bit = (exp & 1) as u8;
-            let mask = bit.wrapping_neg();
+            let bit = Choice::from((exp & 1) as u8);
             let mult = result.multiply(base);
-            result = Self((mult.0 & mask) | (result.0 & !mask));
+            result = Self(u8::conditional_select(&result.0, &mult.0, bit));
             base = base.multiply(base);
             exp >>= 1;
         }
@@ -131,15 +131,13 @@ impl FiniteField {
     /// ```
     #[inline]
     pub fn inverse(self) -> Option<Self> {
-        if self.0 == 0 {
-            None
-        } else {
-            Some(Self(gf256_inverse_const_time(self.0)))
-        }
+        let inv = Self(gf256_inverse_const_time(self.0));
+        let is_non_zero = !self.0.ct_eq(&0);
+        Option::from(subtle::CtOption::new(inv, is_non_zero))
     }
 }
 
-/// Implements addition as XOR in GF(2⁸)
+/// Implements addition as XOR in GF(2^8)
 impl Add for FiniteField {
     type Output = Self;
     #[inline]
@@ -151,7 +149,7 @@ impl Add for FiniteField {
     }
 }
 
-/// Implements subtraction as XOR in GF(2⁸)
+/// Implements subtraction as XOR in GF(2^8)
 impl Sub for FiniteField {
     type Output = Self;
     #[inline]
@@ -161,7 +159,7 @@ impl Sub for FiniteField {
     }
 }
 
-/// Implements multiplication in GF(2⁸)
+/// Implements multiplication in GF(2^8)
 impl Mul for FiniteField {
     type Output = Self;
     #[inline]

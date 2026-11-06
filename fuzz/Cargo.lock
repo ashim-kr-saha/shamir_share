@@ -326,7 +326,6 @@ version = "0.2.2"
 dependencies = [
  "rand",
  "rand_chacha",
- "rand_core",
  "rayon",
  "sha2",
  "subtle",

@@ -1,6 +1,6 @@
 [package]
 name = "shamir_share"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 authors = ["Ashim Kumar Saha"]
 description = "A secure and efficient Rust library for Shamir's Secret Sharing"
@@ -10,6 +10,7 @@ keywords = ["cryptography", "secret-sharing", "security", "shamir"]
 categories = ["cryptography", "algorithms"]
 readme = "README.md"
 exclude = [
+    ".DS_Store",
     ".docs",
     ".github",
     "fuzz",
@@ -21,7 +22,6 @@ exclude = [
 [dependencies]
 rand = "0.10.3"
 rand_chacha = "0.10.0"
-rand_core = "0.10.1"
 thiserror = "2.0.21"
 rayon = "1.12.0"
 sha2 = "0.11.1"

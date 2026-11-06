@@ -8,7 +8,7 @@
 //!
 //! - **Constant-time GF(2^8) arithmetic** - Eliminates lookup tables and secret-dependent branches to prevent cache-timing attacks
 //! - **Cryptographically secure random generation** - Uses `ChaCha20Rng` seeded from system entropy (`SysRng`)
-//! - **Corruption detection** - SHA-256 digest verification with constant-time comparison (`subtle::ConstantTimeEq`) to detect accidental bit-rot and stream truncation (unkeyed; note that unkeyed hashes detect corruption rather than providing cryptographic authenticity against active adversaries possessing $\ge k$ shares)
+//! - **Corruption detection** - SHA-256 digest verification with constant-time comparison (`subtle::ConstantTimeEq`) to detect accidental bit-rot and framing desynchronization (unkeyed; note that because Shamir's scheme is linear over GF(2^8), unkeyed hashes detect corruption rather than providing cryptographic authenticity against active adversaries possessing shares with known plaintext)
 //! - **Atomic storage** - Shares are persisted via atomic temporary-file-and-rename with `0o600` permissions on Unix
 //! - **Memory hygiene** - Optional `zeroize` feature securely clears sensitive buffers and polynomial coefficients on drop
 //! - **Memory safety** - Written in safe Rust with zero unsafe blocks (`#![forbid(unsafe_code)]`)
@@ -51,10 +51,10 @@
 //! let secret = b"my secret data";
 //!
 //! // Generate only the shares you need
-//! let shares: Vec<_> = scheme.dealer(secret).take(5).collect();
+//! let shares: Vec<_> = scheme.try_dealer(secret).unwrap().take(5).collect();
 //!
 //! // Or use iterator methods for advanced filtering
-//! let even_shares: Vec<_> = scheme.dealer(secret)
+//! let even_shares: Vec<_> = scheme.try_dealer(secret).unwrap()
 //!     .filter(|share| share.index % 2 == 0)
 //!     .take(5)
 //!     .collect();
