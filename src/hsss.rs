@@ -49,15 +49,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// ```
 /// use shamir_share::hsss::AccessLevel;
 ///
-/// let president_level = AccessLevel {
-///     name: "President".to_string(),
-///     shares_count: 5,
-/// };
-///
-/// let vp_level = AccessLevel {
-///     name: "VP".to_string(),
-///     shares_count: 3,
-/// };
+/// let president_level = AccessLevel::new("President", 5);
+/// let vp_level = AccessLevel::new("VP", 3);
 /// ```
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,7 +108,10 @@ impl HierarchicalShare {
 
 impl ConstantTimeEq for HierarchicalShare {
     fn ct_eq(&self, other: &Self) -> Choice {
-        let name_eq = self.level_name.as_bytes().ct_eq(other.level_name.as_bytes());
+        let name_eq = self
+            .level_name
+            .as_bytes()
+            .ct_eq(other.level_name.as_bytes());
         let len_eq = (self.shares.len() as u64).ct_eq(&(other.shares.len() as u64));
         let shares_eq = if self.shares.len() == other.shares.len() {
             let mut acc = Choice::from(1);
@@ -613,10 +609,26 @@ impl Hsss {
     /// - Integrity verification (if enabled during splitting)
     /// - No information leakage about the secret with insufficient shares
     pub fn reconstruct(&self, hierarchical_shares: &[HierarchicalShare]) -> Result<Vec<u8>> {
-        // Collect borrowed ShareViews from all hierarchical shares without cloning share data
+        if hierarchical_shares.is_empty() {
+            return Err(ShamirError::InsufficientShares {
+                needed: self.master_threshold(),
+                got: 0,
+            });
+        }
+
         let mut all_views = Vec::new();
 
         for hierarchical_share in hierarchical_shares {
+            let level = self
+                .levels
+                .iter()
+                .find(|l| l.name == hierarchical_share.level_name)
+                .ok_or(ShamirError::InvalidShareFormat)?;
+
+            if hierarchical_share.shares.len() != level.shares_count as usize {
+                return Err(ShamirError::InvalidShareFormat);
+            }
+
             for share in &hierarchical_share.shares {
                 all_views.push(share.as_view());
             }

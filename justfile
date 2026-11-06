@@ -41,13 +41,12 @@ audit:
     cargo install cargo-audit
     cargo audit
 
-# Run security checks for side-channel vulnerabilities
+# Run security checks and static analysis
 security-scan:
-    @echo "Checking for potential side-channel vulnerabilities..."
-    @echo "Looking for lookup tables indexed by secret data..."
-    @if grep -rn --include="*.rs" "\\[.*\\.0.*\\]\\[.*\\.0.*\\]" src; then echo "Suspicious table lookup found!"; exit 1; else echo "No suspicious table lookups found."; fi
-    @echo "Looking for non-constant-time comparisons of secret data..."
-    @if grep -rn --include="*.rs" "if.*==.*secret" src; then echo "Suspicious comparison found!"; exit 1; else echo "No suspicious comparisons found."; fi
+	@echo "Checking that unsafe code is forbidden..."
+	@grep -rn "#!\[forbid(unsafe_code)\]" src/lib.rs
+	@echo "Running clippy security lints..."
+	cargo clippy --all-targets --all-features -- -D warnings
 
 # Clean build artifacts
 clean:

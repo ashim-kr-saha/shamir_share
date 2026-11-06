@@ -11,56 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-#### 1. Removal of `ShamirShare::dealer`
-The panicking method `ShamirShare::dealer(&mut self, secret: &[u8]) -> Dealer` has been removed. Callers must now use the fallible [`ShamirShare::try_dealer(&mut self, secret: &[u8]) -> Result<Dealer, ShamirError>`](https://docs.rs/shamir_share/latest/shamir_share/struct.ShamirShare.html#method.try_dealer).
+- **Removed `ShamirShare::dealer`**: Replaced with the fallible method `ShamirShare::try_dealer` to safely return an error if system entropy generation fails instead of panicking.
+  ```rust
+  // Before (v0.2.x):
+  let shares: Vec<_> = scheme.dealer(secret).take(3).collect();
 
-**Reasoning:** Polynomial coefficient generation and secret compression can fail due to system entropy exhaustion (`rand::rngs::SysRng`) or invalid compression configurations. A library API in cryptography should never hide potential failure modes behind an implicit `.expect()` panic.
+  // After (v0.3.0):
+  let shares: Vec<_> = scheme.try_dealer(secret)?.take(3).collect();
+  ```
+- **Updated Share & Stream Wire Formats**: In-memory shares and stream formats now include cryptographically random salts and bind scheme metadata into integrity digests to protect against share tampering. Shares and streams created with v0.2.x cannot be reconstructed with v0.3.0.
+- **Strict Share Count in `refresh_shares`**: Refreshing shares now strictly requires all `total_shares` to prevent invalidating remaining shares.
+- **Type Signature of `Share::apply_refresh_delta`**: Now takes `&Share` instead of raw byte slices, ensuring the delta belongs to the matching share index.
+- **Strict Share Index Bounds**: All operations now reject share index `0` or indices greater than `total_shares`.
 
-**Migration Guide:**
-```rust
-// Before (v0.2.x):
-let shares: Vec<_> = scheme.dealer(secret).take(3).collect();
+### Added
 
-// After (v0.3.0):
-let shares: Vec<_> = scheme.try_dealer(secret)?.take(3).collect();
-```
+- **Excess Share Consistency Checking**: When more than `threshold` shares are supplied to `reconstruct` or `reconstruct_stream`, all additional shares are cross-verified against the reconstructed secret to catch any corrupted or tampered shares.
+- **Strict Access Level Validation in HSSS**: Hierarchical secret reconstruction now verifies access level names and share counts to prevent mismatched shares.
+- **Constant-Memory Streaming**: Streaming reconstruction operates in fixed 64 KiB block slices, keeping peak memory usage low (~64 MiB max) even with high share counts and thresholds.
 
-#### 2. Streaming Protocol Framing Upgrade (Version 1)
-Streaming secretly shared data (`split_stream` and `reconstruct_stream`) now uses an authenticated 28-byte stream header:
-- `STREAM_MAGIC`: `b"SHS_STR"` (7 bytes)
-- `STREAM_VERSION`: `1u8` (1 byte)
-- `stream_id`: 128-bit cryptographically random nonce generated from `SysRng` (16 bytes)
-- `flags`: `u8` (bit 0: SHA-256 integrity check, bit 1: zstd compression)
-- `index`: Share index (1 byte)
-- `threshold`: Required threshold $k$ (1 byte)
-- `total_shares`: Total shares $n$ (1 byte)
+### Changed
 
-Streams end with an explicit terminal 4-byte `0u32` end-of-stream marker, and each chunk includes a 1-chunk lookahead `is_last` boolean flag authenticated under SHA-256. 
+- **ShareView Debug Redaction**: Debug formatting for `ShareView` now redacts sensitive share bytes (`[REDACTED]`), matching `Share`.
+- **Storage Hardening**: `FileShareStore` enforces restrictive directory permissions on Unix (`0o700`), cleans up orphaned temporary files on startup, and rejects symbolic links.
 
-**Impact:** Streams generated with v0.2.x are incompatible with v0.3.0 stream reconstruction.
+### Security
 
-#### 3. Strict Share Count in `refresh_shares`
-`refresh_shares` now strictly requires exactly all `total_shares` shares (`shares.len() == total_shares as usize`). 
-
-**Reasoning:** In proactive secret sharing over linear Shamir schemes, refreshing only a threshold subset $k < n$ changes the polynomial, rendering all remaining $n - k$ unrefreshed shares permanently invalid and corrupted. Supplying fewer than `total_shares` returns `ShamirError::InsufficientShares`; supplying more returns `ShamirError::InvalidShareFormat`.
-
-#### 4. Strict Share Index Upper Bounds
-All reconstruction and storage entry points now enforce `1 <= index <= total_shares`:
-- `ShamirShare::reconstruct` and `reconstruct_from_views`
-- `ShamirShare::reconstruct_stream`
-- `ShamirShare::refresh_shares`
-- `FileShareStore::store_share` and `load_share`
-
-Passing `index == 0` or `index > total_shares` now consistently returns `ShamirError::InvalidShareIndex(index)`.
-
----
-
-### Security & Hardening Improvements
-
-- **Bounded Decompression:** `decompress_bounded` prevents decompression bombs by enforcing a strict 64 MiB ceiling (`MAX_DECOMPRESSED_CHUNK_SIZE`) and verifying EOF, returning `ShamirError::DecompressionError` instead of truncating or exhausting host memory.
-- **Framing & Headroom Alignment:** `MAX_STREAM_CHUNK_SIZE` and `MAX_SHARE_DATA_LEN` are expanded to `(64 * 1024 * 1024) + (256 * 1024) + 256` bytes to safely accommodate worst-case incompressible zstd expansion and framing.
-- **Constant-Time Field Operations:** `FiniteField::multiply` and `FiniteField::exp` use `subtle::Choice` and `subtle::ConditionallySelectable::conditional_select` on `u8` to prevent micro-architectural timing side channels.
-- **Zero-Copy Memory Hygiene:** Intermediate reconstruction buffers, zero-polynomial deltas, and stream chunks are zeroized on drop with `zeroize::Zeroizing`. Buffer transfers use `std::mem::take` and in-place `drain(..HASH_SIZE)` to eliminate unnecessary heap copies.
-- **Atomic File Store:** `FileShareStore::store_share` writes to randomized temporary files (`.share_XXX_<nonce>.tmp`) with `O_CREAT | O_EXCL` (`create_new`), flushes, syncs file and parent directory descriptors, and renames atomically to prevent race conditions or symlink attacks.
-- **Quadratic Duplicate Loop Guards:** `reconstruct_from_views` and `reconstruct_stream` validate slice lengths against `total_shares` before duplicate index loops, bounding worst-case comparisons to $\le 255$.
-
+- **Tamper Detection**: Shares and stream chunks bind framing metadata and random salts into their integrity digests, preventing modifications, flag stripping, and truncation.
+- **Constant-Time Operations**: Finite field comparisons and operations use constant-time primitives to resist timing side channels.
+- **Memory Hygiene**: Decompressed buffers shrink to fit and file persistence writes directly without unzeroized heap residue.
+- **Stream Termination Guard**: Streaming reconstruction strictly validates the end-of-stream marker and rejects unexpected trailing bytes.

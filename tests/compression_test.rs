@@ -102,7 +102,10 @@ fn test_decompression_bomb_rejected() {
     let large_zeros = vec![0u8; 65 * 1024 * 1024];
     let compressed_bomb = zstd::encode_all(&large_zeros[..], 1).unwrap();
 
-    let shamir = ShamirShare::builder(3, 2).build().unwrap();
+    let shamir = ShamirShare::builder(3, 2)
+        .with_config(shamir_share::Config::new().with_integrity_check(false))
+        .build()
+        .unwrap();
     let mut bomb_shares = shamir.split(&compressed_bomb).unwrap();
 
     // Re-label shares as having compression: true

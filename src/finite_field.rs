@@ -54,9 +54,16 @@ fn gf256_inverse_const_time(a: u8) -> u8 {
 /// let sum = a + b;  // XOR operation
 /// let product = a * b;  // Carryless multiplication
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize))]
 pub struct FiniteField(pub u8);
+
+impl PartialEq for FiniteField {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        bool::from(self.ct_eq(other))
+    }
+}
 
 impl FiniteField {
     /// Creates a new finite field element

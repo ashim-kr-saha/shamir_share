@@ -1,17 +1,14 @@
 use shamir_share::{
-    Config, FileShareStore, FiniteField, HierarchicalShare, Hsss, ShamirError, ShamirShare, Share,
-    ShareStore, MAX_CONFIG_CHUNK_SIZE,
+    Config, FileShareStore, FiniteField, HierarchicalShare, Hsss, MAX_CONFIG_CHUNK_SIZE,
+    ShamirError, ShamirShare, Share, ShareStore,
 };
-use subtle::ConstantTimeEq;
 use std::io::Cursor;
+use subtle::ConstantTimeEq;
 use tempfile::tempdir;
 
 #[test]
 fn test_f01_hsss_rejects_forged_metadata() {
-    let hsss = Hsss::builder(5)
-        .add_level("President", 5)
-        .build()
-        .unwrap();
+    let hsss = Hsss::builder(5).add_level("President", 5).build().unwrap();
 
     let attacker_scheme = ShamirShare::builder(2, 2).build().unwrap();
     let forged_shares = attacker_scheme.split(b"attacker secret").unwrap();
@@ -22,7 +19,10 @@ fn test_f01_hsss_rejects_forged_metadata() {
     assert!(result.is_err());
     match result.unwrap_err() {
         ShamirError::InvalidShareFormat | ShamirError::InsufficientShares { .. } => {}
-        other => panic!("Expected InvalidShareFormat or InsufficientShares, got {:?}", other),
+        other => panic!(
+            "Expected InvalidShareFormat or InsufficientShares, got {:?}",
+            other
+        ),
     }
 }
 
@@ -68,15 +68,24 @@ fn test_f02_reconstruct_stream_with_scheme_enforces_policy() {
         .unwrap();
 
     let secret = b"streaming payload data";
-    let mut writers = vec![Cursor::new(Vec::new()), Cursor::new(Vec::new()), Cursor::new(Vec::new())];
-    scheme.split_stream(&mut Cursor::new(secret), &mut writers).unwrap();
+    let mut writers = vec![
+        Cursor::new(Vec::new()),
+        Cursor::new(Vec::new()),
+        Cursor::new(Vec::new()),
+    ];
+    scheme
+        .split_stream(&mut Cursor::new(secret), &mut writers)
+        .unwrap();
 
     let other_scheme = ShamirShare::builder(5, 3)
         .with_config(Config::new().with_integrity_check(true))
         .build()
         .unwrap();
 
-    let mut readers: Vec<Cursor<Vec<u8>>> = writers.into_iter().map(|w| Cursor::new(w.into_inner())).collect();
+    let mut readers: Vec<Cursor<Vec<u8>>> = writers
+        .into_iter()
+        .map(|w| Cursor::new(w.into_inner()))
+        .collect();
     let mut out = Cursor::new(Vec::new());
 
     // Trying to reconstruct 3-of-2 stream with 5-of-3 scheme must fail
@@ -98,10 +107,19 @@ fn test_f03_stream_decompression_total_limit() {
         .unwrap();
 
     let secret = vec![b'A'; 200];
-    let mut writers = vec![Cursor::new(Vec::new()), Cursor::new(Vec::new()), Cursor::new(Vec::new())];
-    scheme.split_stream(&mut Cursor::new(&secret), &mut writers).unwrap();
+    let mut writers = vec![
+        Cursor::new(Vec::new()),
+        Cursor::new(Vec::new()),
+        Cursor::new(Vec::new()),
+    ];
+    scheme
+        .split_stream(&mut Cursor::new(&secret), &mut writers)
+        .unwrap();
 
-    let mut readers: Vec<Cursor<Vec<u8>>> = writers.into_iter().map(|w| Cursor::new(w.into_inner())).collect();
+    let mut readers: Vec<Cursor<Vec<u8>>> = writers
+        .into_iter()
+        .map(|w| Cursor::new(w.into_inner()))
+        .collect();
     let mut out = Cursor::new(Vec::new());
 
     let err = scheme.reconstruct_stream_with_scheme(&mut readers[0..2], &mut out);
@@ -136,13 +154,15 @@ fn test_f06_decentralized_refresh_deltas() {
     let data_len = shares[0].data.len();
 
     // Coordinator generates zero-sum deltas knowing only indices and length
-    let deltas = scheme.generate_refresh_deltas(&[1, 2, 3, 4, 5], data_len).unwrap();
+    let deltas = scheme
+        .generate_refresh_deltas(&[1, 2, 3, 4, 5], data_len)
+        .unwrap();
     assert_eq!(deltas.len(), 5);
 
     // Each participant applies its delta locally
     for (share, delta) in shares.iter_mut().zip(deltas.iter()) {
         assert_eq!(share.index, delta.index);
-        share.apply_refresh_delta(&delta.data).unwrap();
+        share.apply_refresh_delta(delta).unwrap();
     }
 
     // Reconstruct with refreshed shares
@@ -207,9 +227,15 @@ fn test_f11_storage_trailing_bytes_and_permissions() {
 #[test]
 fn test_f13_error_needed_on_empty_reconstruct() {
     let err = ShamirShare::reconstruct(&[]).unwrap_err();
-    assert!(matches!(err, ShamirError::InsufficientShares { needed: 2, got: 0 }));
+    assert!(matches!(
+        err,
+        ShamirError::InsufficientShares { needed: 2, got: 0 }
+    ));
 
     let scheme = ShamirShare::builder(5, 3).build().unwrap();
     let err_scheme = scheme.reconstruct_with_scheme(&[]).unwrap_err();
-    assert!(matches!(err_scheme, ShamirError::InsufficientShares { needed: 3, got: 0 }));
+    assert!(matches!(
+        err_scheme,
+        ShamirError::InsufficientShares { needed: 3, got: 0 }
+    ));
 }

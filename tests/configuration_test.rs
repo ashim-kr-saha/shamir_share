@@ -75,10 +75,10 @@ fn test_split_with_integrity_check_enabled() {
     let shares = shamir.split(secret).unwrap();
 
     // Assert that the length of the data in each generated share is greater than secret.len()
-    // Specifically, secret.len() + 32 (SHA-256 hash size)
+    // Specifically, secret.len() + 64 (32-byte ephemeral salt + 32-byte SHA-256 hash)
     for share in &shares {
         assert!(share.data.len() > secret.len());
-        assert_eq!(share.data.len(), secret.len() + 32);
+        assert_eq!(share.data.len(), secret.len() + 64);
     }
 
     // Reconstruct the secret and assert it matches

@@ -69,7 +69,7 @@
 pub(crate) use zeroize::Zeroizing;
 
 #[cfg(not(feature = "zeroize"))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Zeroizing<T>(pub T);
 
 #[cfg(not(feature = "zeroize"))]
@@ -101,7 +101,7 @@ pub mod hsss;
 mod shamir;
 mod storage;
 
-pub use config::{Config, SplitMode, MAX_CONFIG_CHUNK_SIZE, MAX_DEFAULT_STREAM_DECOMPRESSED_SIZE};
+pub use config::{Config, MAX_CONFIG_CHUNK_SIZE, MAX_DEFAULT_STREAM_DECOMPRESSED_SIZE, SplitMode};
 pub use error::{Result, ShamirError};
 pub use finite_field::FiniteField;
 pub use hsss::{AccessLevel, HierarchicalShare, Hsss, HsssBuilder};

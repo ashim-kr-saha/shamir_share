@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use rand::TryRng;
@@ -9,7 +9,7 @@ use crate::error::{Result, ShamirError};
 use crate::shamir::Share;
 
 const MAGIC_NUMBER: &[u8] = b"SHS1"; // Magic number for binary share format
-const VERSION: u8 = 2; // Version of the share format
+const VERSION: u8 = 3; // Version of the share format (v3 for keyed metadata-bound digest)
 const HEADER_SIZE: u64 = 4 + 1 + 1 + 3 + 4; // magic(4) + ver(1) + flags(1) + meta(3) + len(4) = 13 bytes
 const MAX_SHARE_DATA_LEN: usize = (64 * 1024 * 1024) + (256 * 1024) + 256;
 
@@ -89,16 +89,38 @@ impl FileShareStore {
         let base_dir = base_dir.as_ref().to_path_buf();
         #[cfg(unix)]
         {
-            use std::os::unix::fs::DirBuilderExt;
-            let mut builder = fs::DirBuilder::new();
-            builder.recursive(true);
-            builder.mode(0o700);
-            builder.create(&base_dir)?;
+            use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+            if base_dir.exists() {
+                let metadata = fs::metadata(&base_dir)?;
+                let current_mode = metadata.permissions().mode();
+                if current_mode & 0o077 != 0 {
+                    let mut perms = metadata.permissions();
+                    perms.set_mode(current_mode & !0o077);
+                    fs::set_permissions(&base_dir, perms)?;
+                }
+            } else {
+                let mut builder = fs::DirBuilder::new();
+                builder.recursive(true);
+                builder.mode(0o700);
+                builder.create(&base_dir)?;
+            }
         }
         #[cfg(not(unix))]
         {
             fs::create_dir_all(&base_dir)?;
         }
+
+        // Clean up any stale temporary files from previous interrupted stores
+        if let Ok(entries) = fs::read_dir(&base_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with(".share_") && name_str.ends_with(".tmp") {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+
         Ok(Self { base_dir })
     }
 
@@ -146,29 +168,24 @@ impl ShareStore for FileShareStore {
                 use std::os::unix::fs::OpenOptionsExt;
                 options.mode(0o600);
             }
-            let file = options.open(&tmp_path)?;
-            let mut writer = BufWriter::new(file);
+            let mut file = options.open(&tmp_path)?;
 
             // Write header
-            writer.write_all(MAGIC_NUMBER)?;
-            writer.write_all(&[VERSION])?;
+            file.write_all(MAGIC_NUMBER)?;
+            file.write_all(&[VERSION])?;
 
             // Write metadata
             let integrity_flag = if share.integrity_check { 1 } else { 0 };
             let compression_flag = if share.compression { 2 } else { 0 };
             let flags = integrity_flag | compression_flag;
-            writer.write_all(&[flags])?;
-            writer.write_all(&[share.index, share.threshold, share.total_shares])?;
+            file.write_all(&[flags])?;
+            file.write_all(&[share.index, share.threshold, share.total_shares])?;
 
             // Write data
-            writer.write_all(&len.to_le_bytes())?;
-            writer.write_all(&share.data)?;
+            file.write_all(&len.to_le_bytes())?;
+            file.write_all(&share.data)?;
 
-            writer.flush()?;
-            let inner_file = writer
-                .into_inner()
-                .map_err(|e| ShamirError::IoError(e.into_error()))?;
-            inner_file.sync_all()?;
+            file.sync_all()?;
             Ok(())
         })();
 
@@ -195,13 +212,18 @@ impl ShareStore for FileShareStore {
         }
 
         let path = self.share_path(index);
-        let mut file = File::open(path).map_err(|e| {
+        let sym_meta = fs::symlink_metadata(&path).map_err(|e| {
             if e.kind() == io::ErrorKind::NotFound {
                 ShamirError::ShareNotFound(index)
             } else {
                 e.into()
             }
         })?;
+        if !sym_meta.is_file() {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+
+        let mut file = File::open(&path)?;
 
         let file_len = file.metadata()?.len();
         if file_len < HEADER_SIZE {
@@ -280,13 +302,14 @@ impl ShareStore for FileShareStore {
             let file_name = entry.file_name();
             let file_name = file_name.to_string_lossy();
 
-            if let Some(stripped) = file_name.strip_prefix("share_")
-                && stripped.len() == 3
-                && stripped.chars().all(|c| c.is_ascii_digit())
-                && let Ok(index) = stripped.parse::<u8>()
-                && index > 0
-            {
-                indices.push(index);
+            if let Some(stripped) = file_name.strip_prefix("share_") {
+                if stripped.len() == 3 && stripped.chars().all(|c| c.is_ascii_digit()) {
+                    if let Ok(index) = stripped.parse::<u8>() {
+                        if index > 0 {
+                            indices.push(index);
+                        }
+                    }
+                }
             }
         }
 
