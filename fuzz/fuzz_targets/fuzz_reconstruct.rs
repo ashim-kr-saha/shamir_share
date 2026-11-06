@@ -1,123 +1,112 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use shamir_share::{ShamirShare, Share};
+use shamir_share::{Config, ShamirShare, Share};
 
-// Fuzzing target for ShamirShare::reconstruct method
+// Fuzzing target for ShamirShare::reconstruct and reconstruct_with_scheme methods
 //
-// This fuzzer generates arbitrary Share objects and tests the reconstruction logic
-// to ensure it never panics regardless of the input. It tests various edge cases:
-// - Invalid share indices (0, duplicates, out of range)
-// - Inconsistent share metadata (threshold, total_shares, integrity_check)
-// - Malformed share data (empty, inconsistent lengths)
-// - Invalid threshold values
-// - Corrupted share data
+// This fuzzer generates both structured shares (consistent metadata to penetrate into
+// Lagrange interpolation, SHA-256 integrity verification, and decompression) and
+// arbitrary/mutated shares to test validator resilience.
 //
-// The goal is to ensure the reconstruct method always returns a proper Result
-// and never panics, even with completely malformed input.
+// The goal is to ensure reconstruct methods always return a proper Result and never panic.
 fuzz_target!(|data: &[u8]| {
-    // Skip if we don't have enough data to work with
-    if data.len() < 10 {
+    if data.len() < 8 {
+        let _ = ShamirShare::reconstruct(&[]);
         return;
     }
 
-    // Parse fuzzer input to create arbitrary shares
-    let mut shares = Vec::new();
     let mut offset = 0;
-
-    // Extract number of shares to generate (1-20 to keep fuzzing efficient)
-    let num_shares = (data[offset] % 20).max(1);
+    let mode = data[offset];
     offset += 1;
 
-    // Generate shares from fuzzer data
-    for _i in 0..num_shares {
-        if offset + 8 >= data.len() {
-            break;
-        }
+    let threshold = (data[offset] % 8).max(2);
+    let total_shares = threshold.max((data[offset + 1] % 16).max(threshold));
+    let integrity_check = (data[offset + 2] & 1) != 0;
+    let compression = (data[offset + 2] & 2) != 0;
+    offset += 3;
 
-        // Extract share parameters from fuzzer data
-        let index = data[offset];
-        let threshold = data[offset + 1];
-        let total_shares = data[offset + 2];
-        let integrity_check = data[offset + 3] & 1 == 1;
-        let compression = (data[offset + 3] & 2) != 0;
+    let num_shares = ((data[offset] as usize % (total_shares as usize + 2))).max(1);
+    offset += 1;
 
-        // Extract data length (limit to reasonable size for fuzzing performance)
-        let data_len = ((data[offset + 4] as usize) << 8 | data[offset + 5] as usize).min(1000);
-        offset += 6;
+    if mode % 2 == 0 {
+        // Mode 0: Consistent metadata across shares to exercise interpolation,
+        // hash checks, and decompression.
+        let data_len = if offset + 2 <= data.len() {
+            let len = ((data[offset] as usize) << 8 | (data[offset + 1] as usize)) % 512;
+            offset += 2;
+            len
+        } else {
+            32
+        };
 
-        // Extract share data
-        let mut share_data = Vec::new();
-        for j in 0..data_len {
-            if offset + j < data.len() {
-                share_data.push(data[offset + j]);
-            } else {
-                share_data.push(0); // Pad with zeros if not enough data
+        let mut shares = Vec::with_capacity(num_shares);
+        for i in 0..num_shares {
+            let index = ((i % (total_shares as usize)) + 1) as u8;
+            let mut share_data = vec![0u8; data_len];
+            for b in 0..data_len {
+                if offset < data.len() {
+                    share_data[b] = data[offset];
+                    offset += 1;
+                }
             }
+            shares.push(Share::new(
+                index,
+                share_data,
+                threshold,
+                total_shares,
+                integrity_check,
+                compression,
+            ));
         }
-        offset += data_len;
 
-        // Create share with potentially invalid parameters
-        let share = Share::new(
-            index,
-            share_data,
-            threshold,
-            total_shares,
-            integrity_check,
-            compression,
-        );
+        let _ = ShamirShare::reconstruct(&shares);
 
-        shares.push(share);
-    }
-
-    // Test reconstruction with the generated shares
-    // This should never panic, only return Ok or Err
-    let _result = ShamirShare::reconstruct(&shares);
-
-    // Test with empty shares vector
-    let _result = ShamirShare::reconstruct(&[]);
-
-    // Test with single share
-    if !shares.is_empty() {
-        let _result = ShamirShare::reconstruct(&shares[0..1]);
-    }
-
-    // Test with duplicate shares (same index)
-    if shares.len() >= 2 {
-        let duplicate_shares = vec![shares[0].clone(), shares[0].clone()];
-        let _result = ShamirShare::reconstruct(&duplicate_shares);
-    }
-
-    // Test with shares having inconsistent data lengths
-    if shares.len() >= 2 {
-        let mut inconsistent_shares = shares.clone();
-        if inconsistent_shares.len() >= 2 {
-            // Make second share have different data length
-            inconsistent_shares[1].data = vec![0u8; inconsistent_shares[0].data.len() + 1];
-            let _result = ShamirShare::reconstruct(&inconsistent_shares);
+        let config = Config::new()
+            .with_integrity_check(integrity_check)
+            .with_compression(compression);
+        if let Ok(scheme) = ShamirShare::builder(total_shares, threshold)
+            .with_config(config)
+            .build()
+        {
+            let _ = scheme.reconstruct_with_scheme(&shares);
         }
-    }
 
-    // Test with shares having inconsistent integrity check settings
-    if shares.len() >= 2 {
-        let mut inconsistent_shares = shares.clone();
-        if inconsistent_shares.len() >= 2 {
-            inconsistent_shares[1].integrity_check = !inconsistent_shares[0].integrity_check;
-            let _result = ShamirShare::reconstruct(&inconsistent_shares);
+        if shares.len() >= 2 {
+            let duplicate_shares = vec![shares[0].clone(), shares[0].clone()];
+            let _ = ShamirShare::reconstruct(&duplicate_shares);
         }
+    } else {
+        // Mode 1: Arbitrary random metadata per share to test validator robustness
+        let mut shares = Vec::with_capacity(num_shares);
+        for _ in 0..num_shares {
+            if offset + 6 >= data.len() {
+                break;
+            }
+            let index = data[offset];
+            let th = data[offset + 1];
+            let tot = data[offset + 2];
+            let ic = data[offset + 3] & 1 == 1;
+            let comp = (data[offset + 3] & 2) != 0;
+            let dlen = (data[offset + 4] as usize) % 256;
+            offset += 5;
+
+            let mut share_data = Vec::with_capacity(dlen);
+            for _ in 0..dlen {
+                if offset < data.len() {
+                    share_data.push(data[offset]);
+                    offset += 1;
+                } else {
+                    share_data.push(0);
+                }
+            }
+
+            shares.push(Share::new(index, share_data, th, tot, ic, comp));
+        }
+
+        let _ = ShamirShare::reconstruct(&shares);
     }
 
-    // Test with zero-index shares (invalid in GF(256))
-    if !shares.is_empty() {
-        let mut zero_index_shares = shares.clone();
-        zero_index_shares[0].index = 0;
-        let _result = ShamirShare::reconstruct(&zero_index_shares);
-    }
-
-    // Test with very large threshold values
-    if !shares.is_empty() {
-        let mut large_threshold_shares = shares.clone();
-        large_threshold_shares[0].threshold = 255;
-        let _result = ShamirShare::reconstruct(&large_threshold_shares);
-    }
+    // Always test empty input
+    let _ = ShamirShare::reconstruct(&[]);
 });

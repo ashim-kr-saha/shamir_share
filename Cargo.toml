@@ -2,6 +2,7 @@
 name = "shamir_share"
 version = "0.3.0"
 edition = "2024"
+rust-version = "1.85"
 authors = ["Ashim Kumar Saha"]
 description = "A secure and efficient Rust library for Shamir's Secret Sharing"
 license = "MIT"

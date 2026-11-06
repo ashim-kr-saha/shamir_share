@@ -22,7 +22,7 @@ fn bench_split(c: &mut Criterion) {
     // Benchmark different data sizes
     for size in DATA_SIZES.iter() {
         let data = create_mock_data(*size);
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
         group.bench_function(format!("split_{}_bytes", size), |b| {
             b.iter(|| {
@@ -36,7 +36,7 @@ fn bench_split(c: &mut Criterion) {
 
 fn bench_reconstruct(c: &mut Criterion) {
     let mut group = c.benchmark_group("reconstruct");
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Benchmark different data sizes
     for size in DATA_SIZES.iter() {
@@ -62,7 +62,7 @@ fn bench_full_workflow(c: &mut Criterion) {
 
         group.bench_function(format!("workflow_{}_bytes", size), |b| {
             b.iter(|| {
-                let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+                let shamir = ShamirShare::builder(5, 3).build().unwrap();
                 let shares = shamir.split(black_box(&data)).unwrap();
                 black_box(ShamirShare::reconstruct(&shares[0..3]).unwrap());
             });

@@ -115,6 +115,17 @@ impl FiniteField {
         result
     }
 
+    /// Computes multiplicative inverse in constant time, returning a [`subtle::CtOption`].
+    ///
+    /// Uses Fermat's Little Theorem: a^(p-2) = a^254 in GF(2^8).
+    /// The returned `CtOption` is `None` for zero (which has no inverse).
+    #[inline]
+    pub fn ct_inverse(self) -> subtle::CtOption<Self> {
+        let inv = Self(gf256_inverse_const_time(self.0));
+        let is_non_zero = !self.0.ct_eq(&0);
+        subtle::CtOption::new(inv, is_non_zero)
+    }
+
     /// Computes multiplicative inverse using a constant-time algorithm
     /// to prevent timing side-channel attacks.
     ///
@@ -131,9 +142,21 @@ impl FiniteField {
     /// ```
     #[inline]
     pub fn inverse(self) -> Option<Self> {
-        let inv = Self(gf256_inverse_const_time(self.0));
-        let is_non_zero = !self.0.ct_eq(&0);
-        Option::from(subtle::CtOption::new(inv, is_non_zero))
+        Option::from(self.ct_inverse())
+    }
+}
+
+impl ConstantTimeEq for FiniteField {
+    #[inline]
+    fn ct_eq(&self, other: &Self) -> Choice {
+        self.0.ct_eq(&other.0)
+    }
+}
+
+impl ConditionallySelectable for FiniteField {
+    #[inline]
+    fn conditional_select(a: &Self, b: &Self, choice: Choice) -> Self {
+        Self(u8::conditional_select(&a.0, &b.0, choice))
     }
 }
 

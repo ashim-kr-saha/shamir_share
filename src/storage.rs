@@ -87,7 +87,18 @@ impl FileShareStore {
     /// ```
     pub fn new<P: AsRef<Path>>(base_dir: P) -> Result<Self> {
         let base_dir = base_dir.as_ref().to_path_buf();
-        fs::create_dir_all(&base_dir)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            let mut builder = fs::DirBuilder::new();
+            builder.recursive(true);
+            builder.mode(0o700);
+            builder.create(&base_dir)?;
+        }
+        #[cfg(not(unix))]
+        {
+            fs::create_dir_all(&base_dir)?;
+        }
         Ok(Self { base_dir })
     }
 
@@ -243,12 +254,17 @@ impl ShareStore for FileShareStore {
             return Err(ShamirError::InvalidShareFormat);
         }
 
-        let mut data = vec![0u8; len];
+        let mut data = crate::Zeroizing::new(vec![0u8; len]);
         file.read_exact(&mut data)?;
+
+        let mut trailing = [0u8; 1];
+        if file.read(&mut trailing)? != 0 {
+            return Err(ShamirError::InvalidShareFormat);
+        }
 
         Ok(Share {
             index,
-            data,
+            data: std::mem::take(&mut *data),
             threshold,
             total_shares,
             integrity_check,

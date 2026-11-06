@@ -11,34 +11,9 @@ use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use subtle::ConstantTimeEq;
 
+use crate::Zeroizing;
 #[cfg(feature = "zeroize")]
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
-
-#[cfg(not(feature = "zeroize"))]
-#[derive(Debug, Clone)]
-pub struct Zeroizing<T>(pub T);
-
-#[cfg(not(feature = "zeroize"))]
-impl<T> Zeroizing<T> {
-    pub fn new(val: T) -> Self {
-        Self(val)
-    }
-}
-
-#[cfg(not(feature = "zeroize"))]
-impl<T> std::ops::Deref for Zeroizing<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[cfg(not(feature = "zeroize"))]
-impl<T> std::ops::DerefMut for Zeroizing<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const HASH_SIZE: usize = 32; // SHA-256 output size
 const MAX_STREAM_CHUNK_SIZE: usize = (64 * 1024 * 1024) + (256 * 1024) + 256;
@@ -96,14 +71,22 @@ pub struct Share {
     pub compression: bool,
 }
 
+impl ConstantTimeEq for Share {
+    fn ct_eq(&self, other: &Self) -> subtle::Choice {
+        let index_eq = self.index.ct_eq(&other.index);
+        let threshold_eq = self.threshold.ct_eq(&other.threshold);
+        let total_shares_eq = self.total_shares.ct_eq(&other.total_shares);
+        let integrity_eq = (self.integrity_check as u8).ct_eq(&(other.integrity_check as u8));
+        let compression_eq = (self.compression as u8).ct_eq(&(other.compression as u8));
+        let data_eq = self.data.ct_eq(&other.data);
+
+        index_eq & threshold_eq & total_shares_eq & integrity_eq & compression_eq & data_eq
+    }
+}
+
 impl PartialEq for Share {
     fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-            && self.threshold == other.threshold
-            && self.total_shares == other.total_shares
-            && self.integrity_check == other.integrity_check
-            && self.compression == other.compression
-            && bool::from(self.data.ct_eq(&other.data))
+        bool::from(self.ct_eq(other))
     }
 }
 impl Eq for Share {}
@@ -140,6 +123,23 @@ impl Share {
             compression: self.compression,
         }
     }
+
+    /// Applies a zero-polynomial delta to this share in-place to refresh it.
+    ///
+    /// This enables decentralized proactive secret sharing without collecting
+    /// secret shares into a central process.
+    ///
+    /// # Errors
+    /// Returns [`ShamirError::InconsistentShareLength`] if `delta.len() != self.data.len()`.
+    pub fn apply_refresh_delta(&mut self, delta: &[u8]) -> Result<()> {
+        if delta.len() != self.data.len() {
+            return Err(ShamirError::InconsistentShareLength);
+        }
+        for (b, d) in self.data.iter_mut().zip(delta) {
+            *b ^= d;
+        }
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for Share {
@@ -166,6 +166,7 @@ impl std::fmt::Debug for Share {
 /// - Maintains the same security properties as `Share`
 /// - Uses borrowed data to avoid unnecessary allocations
 /// - Constant-time equality operations are preserved
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy)]
 pub struct ShareView<'a> {
     /// Index of the share (x-coordinate in the polynomial, 1..=255)
@@ -182,14 +183,22 @@ pub struct ShareView<'a> {
     pub compression: bool,
 }
 
+impl<'a> ConstantTimeEq for ShareView<'a> {
+    fn ct_eq(&self, other: &Self) -> subtle::Choice {
+        let index_eq = self.index.ct_eq(&other.index);
+        let threshold_eq = self.threshold.ct_eq(&other.threshold);
+        let total_shares_eq = self.total_shares.ct_eq(&other.total_shares);
+        let integrity_eq = (self.integrity_check as u8).ct_eq(&(other.integrity_check as u8));
+        let compression_eq = (self.compression as u8).ct_eq(&(other.compression as u8));
+        let data_eq = self.data.ct_eq(other.data);
+
+        index_eq & threshold_eq & total_shares_eq & integrity_eq & compression_eq & data_eq
+    }
+}
+
 impl<'a> PartialEq for ShareView<'a> {
     fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
-            && self.threshold == other.threshold
-            && self.total_shares == other.total_shares
-            && self.integrity_check == other.integrity_check
-            && self.compression == other.compression
-            && bool::from(self.data.ct_eq(other.data))
+        bool::from(self.ct_eq(other))
     }
 }
 impl<'a> Eq for ShareView<'a> {}
@@ -281,6 +290,7 @@ impl std::fmt::Debug for Dealer {
 /// let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
 /// assert_eq!(reconstructed, secret);
 /// ```
+#[derive(Clone)]
 pub struct ShamirShare {
     /// Total number of shares to generate
     total_shares: u8,
@@ -288,8 +298,6 @@ pub struct ShamirShare {
     threshold: u8,
     /// Configuration options for the sharing scheme
     config: Config,
-    /// Cryptographically secure random number generator
-    rng: ChaCha20Rng,
 }
 
 impl std::fmt::Debug for ShamirShare {
@@ -372,7 +380,6 @@ impl ShamirShareBuilder {
     /// - `threshold` is less than 2
     /// - `threshold` > `total_shares`
     /// - Configuration validation fails
-    /// - RNG initialization fails
     pub fn build(self) -> Result<ShamirShare> {
         if self.total_shares < 2 {
             return Err(ShamirError::InvalidShareCount(self.total_shares));
@@ -389,40 +396,67 @@ impl ShamirShareBuilder {
 
         self.config.validate()?;
 
-        let rng = ChaCha20Rng::try_from_rng(&mut SysRng)
-            .map_err(|e| ShamirError::RngError(e.to_string()))?;
-
         Ok(ShamirShare {
             total_shares: self.total_shares,
             threshold: self.threshold,
             config: self.config,
-            rng,
         })
     }
 }
 
 impl ShamirShare {
     #[inline]
-    fn reseed_rng(&mut self) -> Result<()> {
-        self.rng = ChaCha20Rng::try_from_rng(&mut SysRng)
-            .map_err(|e| ShamirError::RngError(e.to_string()))?;
-        Ok(())
+    fn local_rng() -> Result<ChaCha20Rng> {
+        ChaCha20Rng::try_from_rng(&mut SysRng)
+            .map_err(|e| ShamirError::RngError(e.to_string()))
     }
 
     #[cfg(feature = "compress")]
     fn decompress_bounded(payload: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        let expected_size = zstd::stream::decompressed_size(payload);
+        if let Some(size) = expected_size {
+            if size > MAX_DECOMPRESSED_CHUNK_SIZE {
+                return Err(ShamirError::DecompressionError(
+                    "Decompressed payload exceeds 64 MiB limit".into(),
+                ));
+            }
+        }
+
+        let initial_capacity = expected_size
+            .map(|s| s as usize)
+            .unwrap_or(4096)
+            .min(MAX_DECOMPRESSED_CHUNK_SIZE as usize);
+
+        let mut decompressed = Zeroizing::new(Vec::with_capacity(initial_capacity));
         let decoder = zstd::Decoder::new(payload)
             .map_err(|e| ShamirError::DecompressionError(e.to_string()))?;
-        let mut decompressed = Zeroizing::new(Vec::new());
-        decoder
-            .take(MAX_DECOMPRESSED_CHUNK_SIZE + 1)
-            .read_to_end(&mut decompressed)
-            .map_err(|e| ShamirError::DecompressionError(e.to_string()))?;
-        if (decompressed.len() as u64) > MAX_DECOMPRESSED_CHUNK_SIZE {
-            return Err(ShamirError::DecompressionError(
-                "Decompressed payload exceeds 64 MiB limit".into(),
-            ));
+
+        let mut limited_reader = decoder.take(MAX_DECOMPRESSED_CHUNK_SIZE + 1);
+        let mut read_buf = Zeroizing::new([0u8; 16384]);
+
+        loop {
+            let n = limited_reader
+                .read(&mut *read_buf)
+                .map_err(|e| ShamirError::DecompressionError(e.to_string()))?;
+            if n == 0 {
+                break;
+            }
+            if (decompressed.len() as u64) + (n as u64) > MAX_DECOMPRESSED_CHUNK_SIZE {
+                return Err(ShamirError::DecompressionError(
+                    "Decompressed payload exceeds 64 MiB limit".into(),
+                ));
+            }
+            if decompressed.capacity() - decompressed.len() < n {
+                let new_cap = (decompressed.capacity() * 2)
+                    .max(decompressed.len() + n)
+                    .min(MAX_DECOMPRESSED_CHUNK_SIZE as usize);
+                let mut new_decompressed = Zeroizing::new(Vec::with_capacity(new_cap));
+                new_decompressed.extend_from_slice(&decompressed);
+                decompressed = new_decompressed;
+            }
+            decompressed.extend_from_slice(&read_buf[..n]);
         }
+
         Ok(decompressed)
     }
 
@@ -487,8 +521,15 @@ impl ShamirShare {
     /// let shares: Vec<_> = scheme.try_dealer(secret).unwrap().take(3).collect();
     /// assert_eq!(shares.len(), 3);
     /// ```
-    pub fn try_dealer(&mut self, secret: &[u8]) -> Result<Dealer> {
-        self.reseed_rng()?;
+    pub fn try_dealer(&self, secret: &[u8]) -> Result<Dealer> {
+        if secret.len() > crate::config::MAX_CONFIG_CHUNK_SIZE {
+            return Err(ShamirError::InvalidConfig(format!(
+                "Secret length {} exceeds maximum in-memory size {}; use split_stream instead",
+                secret.len(),
+                crate::config::MAX_CONFIG_CHUNK_SIZE
+            )));
+        }
+
         let payload = Zeroizing::new(if self.config.compression() {
             #[cfg(feature = "compress")]
             {
@@ -521,11 +562,12 @@ impl ShamirShare {
         let secret_len = data_to_split.len();
         let t = self.threshold as usize;
         let num_coeffs = secret_len.checked_mul(t - 1).ok_or_else(|| {
-            ShamirError::StorageError("Data length overflow in coefficient generation".into())
+            ShamirError::InvalidConfig("Data length overflow in coefficient generation".into())
         })?;
 
         let mut coefficients = vec![0u8; num_coeffs];
-        self.rng.fill_bytes(&mut coefficients);
+        let mut rng = Self::local_rng()?;
+        rng.fill_bytes(&mut coefficients);
 
         Ok(Dealer {
             data: std::mem::take(&mut data_to_split),
@@ -563,7 +605,7 @@ impl ShamirShare {
     /// let shares = scheme.split(b"secret data").unwrap();
     /// assert_eq!(shares.len(), 5);
     /// ```
-    pub fn split(&mut self, secret: &[u8]) -> Result<Vec<Share>> {
+    pub fn split(&self, secret: &[u8]) -> Result<Vec<Share>> {
         match self.config.mode() {
             SplitMode::Parallel => {
                 let dealer = self.try_dealer(secret)?;
@@ -581,15 +623,12 @@ impl ShamirShare {
                         let x = FiniteField::new(x_val);
                         let share_data: Vec<u8> = (0..secret_len)
                             .map(|byte_idx| {
-                                let mut acc = FiniteField::new(0);
-                                for j in (0..t).rev() {
-                                    let coeff = if j == 0 {
-                                        FiniteField::new(data[byte_idx])
-                                    } else {
-                                        FiniteField::new(coefficients[byte_idx * (t - 1) + (j - 1)])
-                                    };
+                                let mut acc = FiniteField::new(coefficients[byte_idx * (t - 1) + (t - 2)]);
+                                for j in (1..t - 1).rev() {
+                                    let coeff = FiniteField::new(coefficients[byte_idx * (t - 1) + (j - 1)]);
                                     acc = acc * x + coeff;
                                 }
+                                acc = acc * x + FiniteField::new(data[byte_idx]);
                                 acc.0
                             })
                             .collect();
@@ -635,6 +674,12 @@ impl ShamirShare {
     /// - Rejects indices with value 0 and duplicate indices
     /// - Rejects threshold < 2 and verifies all share metadata matches
     ///
+    /// # Security Note
+    /// This static method derives threshold, total shares, and integrity/compression flags
+    /// directly from share headers. In hostile-input or multi-tenant environments where
+    /// shares may be untrusted, use [`reconstruct_with_scheme`](Self::reconstruct_with_scheme)
+    /// to enforce strict scheme validation.
+    ///
     /// # Errors
     /// Returns `ShamirError` if:
     /// - No shares provided or fewer shares than threshold
@@ -671,8 +716,62 @@ impl ShamirShare {
     /// # Arguments
     /// * `views` - Slice of borrowed share views
     pub fn reconstruct_from_views(views: &[ShareView<'_>]) -> Result<Vec<u8>> {
+        Self::reconstruct_from_views_with_mode(views, SplitMode::default())
+    }
+
+    /// Reconstructs the secret while strictly validating share metadata against the scheme's parameters
+    ///
+    /// Unlike the static [`reconstruct`](Self::reconstruct), this method enforces that every share's
+    /// threshold, total_shares, integrity_check, and compression flags match `self.threshold`,
+    /// `self.total_shares`, and `self.config`.
+    ///
+    /// # Errors
+    /// Returns [`ShamirError::InsufficientShares`] if fewer than `self.threshold` shares are provided.
+    /// Returns [`ShamirError::InvalidShareFormat`] if any share's metadata differs from the scheme.
+    pub fn reconstruct_with_scheme(&self, shares: &[Share]) -> Result<Vec<u8>> {
+        let views: Vec<ShareView<'_>> = shares.iter().map(|s| s.as_view()).collect();
+        self.reconstruct_from_views_with_scheme(&views)
+    }
+
+    /// Reconstructs the secret from `ShareView`s while strictly validating against the scheme's parameters
+    pub fn reconstruct_from_views_with_scheme(&self, views: &[ShareView<'_>]) -> Result<Vec<u8>> {
         if views.is_empty() {
-            return Err(ShamirError::InsufficientShares { needed: 1, got: 0 });
+            return Err(ShamirError::InsufficientShares {
+                needed: self.threshold,
+                got: 0,
+            });
+        }
+
+        if views.len() < self.threshold as usize {
+            return Err(ShamirError::InsufficientShares {
+                needed: self.threshold,
+                got: u8::try_from(views.len()).unwrap_or(u8::MAX),
+            });
+        }
+
+        if views.len() > self.total_shares as usize {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+
+        for v in views {
+            if v.threshold != self.threshold
+                || v.total_shares != self.total_shares
+                || v.integrity_check != self.config.integrity_check()
+                || v.compression != self.config.compression()
+            {
+                return Err(ShamirError::InvalidShareFormat);
+            }
+        }
+
+        Self::reconstruct_from_views_with_mode(views, self.config.mode())
+    }
+
+    fn reconstruct_from_views_with_mode(
+        views: &[ShareView<'_>],
+        mode: SplitMode,
+    ) -> Result<Vec<u8>> {
+        if views.is_empty() {
+            return Err(ShamirError::InsufficientShares { needed: 2, got: 0 });
         }
 
         let threshold = views[0].threshold;
@@ -701,9 +800,11 @@ impl ShamirShare {
                 || v.total_shares != total_shares
                 || v.integrity_check != integrity_check
                 || v.compression != compression
-                || v.data.len() != data_len
             {
                 return Err(ShamirError::InvalidShareFormat);
+            }
+            if v.data.len() != data_len {
+                return Err(ShamirError::InconsistentShareLength);
             }
             if v.index == 0 || v.index > total_shares {
                 return Err(ShamirError::InvalidShareIndex(v.index));
@@ -719,7 +820,7 @@ impl ShamirShare {
         }
 
         let active_views = &views[..threshold as usize];
-        let mut reconstructed_data = Self::reconstruct_chunk_from_views(active_views)?;
+        let reconstructed_data = Self::reconstruct_chunk_from_views_with_mode(active_views, mode)?;
 
         if integrity_check {
             if reconstructed_data.len() < HASH_SIZE {
@@ -745,8 +846,9 @@ impl ShamirShare {
                     ))
                 }
             } else {
-                reconstructed_data.drain(..HASH_SIZE);
-                Ok(std::mem::take(&mut *reconstructed_data))
+                let mut secret = Vec::with_capacity(payload.len());
+                secret.extend_from_slice(payload);
+                Ok(secret)
             }
         } else if compression {
             #[cfg(feature = "compress")]
@@ -761,7 +863,9 @@ impl ShamirShare {
                 ))
             }
         } else {
-            Ok(std::mem::take(&mut *reconstructed_data))
+            let mut secret = Vec::with_capacity(reconstructed_data.len());
+            secret.extend_from_slice(&reconstructed_data);
+            Ok(secret)
         }
     }
 
@@ -824,11 +928,11 @@ impl ShamirShare {
     /// shamir.split_stream(&mut source, &mut dest_cursors).unwrap();
     /// ```
     pub fn split_stream<R: Read, W: Write>(
-        &mut self,
+        &self,
         source: &mut R,
         destinations: &mut [W],
     ) -> Result<()> {
-        self.reseed_rng()?;
+        let mut rng = Self::local_rng()?;
         if destinations.len() != self.total_shares as usize {
             return Err(ShamirError::InvalidConfig(format!(
                 "Expected {} destinations, got {}",
@@ -932,7 +1036,7 @@ impl ShamirShare {
                 data
             });
 
-            self.split_chunk_into(&chunk_with_digest, &mut share_data_buffers)?;
+            self.split_chunk_into(&chunk_with_digest, &mut share_data_buffers, &mut rng)?;
 
             for (i, share_data) in share_data_buffers.iter().enumerate() {
                 let length = u32::try_from(share_data.len()).map_err(|_| {
@@ -1035,9 +1139,33 @@ impl ShamirShare {
     /// ShamirShare::reconstruct_stream(&mut sources, &mut dest_cursor).unwrap();
     /// assert_eq!(&destination, data);
     /// ```
+    /// Reconstructs data from multiple share streams using chunk-based processing
+    ///
+    /// # Security Note
+    /// This static method derives threshold, total shares, and integrity/compression flags
+    /// directly from stream headers. In hostile-input environments where shares may be untrusted,
+    /// use [`reconstruct_stream_with_scheme`](Self::reconstruct_stream_with_scheme)
+    /// to enforce strict scheme validation.
     pub fn reconstruct_stream<R: Read, W: Write>(
         sources: &mut [R],
         destination: &mut W,
+    ) -> Result<()> {
+        Self::reconstruct_stream_internal(sources, destination, None)
+    }
+
+    /// Reconstructs a stream while strictly validating stream headers against the scheme's parameters
+    pub fn reconstruct_stream_with_scheme<R: Read, W: Write>(
+        &self,
+        sources: &mut [R],
+        destination: &mut W,
+    ) -> Result<()> {
+        Self::reconstruct_stream_internal(sources, destination, Some(self))
+    }
+
+    fn reconstruct_stream_internal<R: Read, W: Write>(
+        sources: &mut [R],
+        destination: &mut W,
+        scheme: Option<&ShamirShare>,
     ) -> Result<()> {
         if sources.len() < 2 {
             return Err(ShamirError::InsufficientShares {
@@ -1079,6 +1207,16 @@ impl ShamirShare {
             return Err(ShamirError::InvalidThreshold(threshold));
         }
 
+        if let Some(s) = scheme {
+            if threshold != s.threshold
+                || total_shares != s.total_shares
+                || integrity_check != s.config.integrity_check()
+                || compression != s.config.compression()
+            {
+                return Err(ShamirError::InvalidShareFormat);
+            }
+        }
+
         if sources.len() < threshold as usize {
             return Err(ShamirError::InsufficientShares {
                 needed: threshold,
@@ -1096,9 +1234,7 @@ impl ShamirShare {
                 || header[26] != threshold
                 || header[27] != total_shares
             {
-                return Err(ShamirError::InvalidConfig(
-                    "Inconsistent stream headers across sources".to_string(),
-                ));
+                return Err(ShamirError::InvalidShareFormat);
             }
             let index = header[25];
             if index == 0 || index > total_shares {
@@ -1127,6 +1263,13 @@ impl ShamirShare {
             .map(|_| Zeroizing::new(Vec::new()))
             .collect();
         let mut reconstructed_chunk_buffer = Zeroizing::new(Vec::new());
+
+        #[cfg(feature = "compress")]
+        let max_stream_output_bytes = scheme
+            .and_then(|s| s.config.max_decompressed_stream_size())
+            .unwrap_or(crate::config::MAX_DEFAULT_STREAM_DECOMPRESSED_SIZE);
+        #[cfg(feature = "compress")]
+        let mut total_decompressed_bytes: u64 = 0;
 
         let mut chunk_index: u64 = 0;
         let mut stream_finished = false;
@@ -1210,6 +1353,16 @@ impl ShamirShare {
                 #[cfg(feature = "compress")]
                 {
                     let decompressed = Self::decompress_bounded(payload)?;
+                    total_decompressed_bytes = total_decompressed_bytes
+                        .checked_add(decompressed.len() as u64)
+                        .ok_or_else(|| {
+                            ShamirError::DecompressionError("Stream decompressed size overflow".into())
+                        })?;
+                    if total_decompressed_bytes > max_stream_output_bytes {
+                        return Err(ShamirError::DecompressionError(
+                            "Cumulative decompressed stream exceeds maximum allowed limit".into(),
+                        ));
+                    }
                     destination
                         .write_all(&decompressed)
                         .map_err(ShamirError::IoError)?;
@@ -1258,40 +1411,39 @@ impl ShamirShare {
     /// # Arguments
     /// * `data` - The chunk data to split
     /// * `destination_buffers` - Pre-allocated reusable buffers for each share
+    /// * `rng` - CSPRNG for coefficient generation
     ///
     /// # Security
     /// - Constant-time polynomial evaluation
     /// - Cryptographically secure randomness for polynomial coefficients
     fn split_chunk_into(
-        &mut self,
+        &self,
         data: &[u8],
         destination_buffers: &mut [Zeroizing<Vec<u8>>],
+        rng: &mut ChaCha20Rng,
     ) -> Result<()> {
-        let secret_len = data.len();
+        let chunk_len = data.len();
         let t = self.threshold as usize;
-        let num_coeffs = secret_len.checked_mul(t - 1).ok_or_else(|| {
-            ShamirError::StorageError("Data length overflow in coefficient generation".into())
+        let num_coeffs = chunk_len.checked_mul(t - 1).ok_or_else(|| {
+            ShamirError::InvalidConfig("Data length overflow in coefficient generation".into())
         })?;
 
         let mut random_data = Zeroizing::new(vec![0u8; num_coeffs]);
-        self.rng.fill_bytes(&mut random_data);
+        rng.fill_bytes(&mut random_data);
 
         for (i, dest) in destination_buffers.iter_mut().enumerate() {
             let x_val = (i + 1) as u8;
             let x = FiniteField::new(x_val);
             dest.clear();
-            dest.reserve(secret_len);
+            dest.reserve(chunk_len);
 
-            for idx in 0..secret_len {
-                let mut acc = FiniteField::new(0);
-                for j in (0..t).rev() {
-                    let coeff = if j == 0 {
-                        FiniteField::new(data[idx])
-                    } else {
-                        FiniteField::new(random_data[idx * (t - 1) + (j - 1)])
-                    };
+            for idx in 0..chunk_len {
+                let mut acc = FiniteField::new(random_data[idx * (t - 1) + (t - 2)]);
+                for j in (1..t - 1).rev() {
+                    let coeff = FiniteField::new(random_data[idx * (t - 1) + (j - 1)]);
                     acc = acc * x + coeff;
                 }
+                acc = acc * x + FiniteField::new(data[idx]);
                 dest.push(acc.0);
             }
         }
@@ -1376,21 +1528,24 @@ impl ShamirShare {
     /// - Thread pool parallelization gated on `secret_len >= 16384`
     /// - Validates share consistency before processing
     #[inline]
-    fn reconstruct_chunk_from_views(views: &[ShareView<'_>]) -> Result<Zeroizing<Vec<u8>>> {
+    fn reconstruct_chunk_from_views_with_mode(
+        views: &[ShareView<'_>],
+        mode: SplitMode,
+    ) -> Result<Zeroizing<Vec<u8>>> {
         if views.is_empty() {
             return Err(ShamirError::InsufficientShares { needed: 2, got: 0 });
         }
 
-        let secret_len = views[0].data.len();
+        let data_len = views[0].data.len();
 
-        if !views.iter().all(|v| v.data.len() == secret_len) {
+        if !views.iter().all(|v| v.data.len() == data_len) {
             return Err(ShamirError::InconsistentShareLength);
         }
 
         let lagrange_coefficients = Self::compute_lagrange_coefficients_from_views(views)?;
-        let mut output_buffer = Zeroizing::new(vec![0u8; secret_len]);
+        let mut output_buffer = Zeroizing::new(vec![0u8; data_len]);
 
-        if secret_len >= 16384 {
+        if mode == SplitMode::Parallel && data_len >= 16384 {
             output_buffer
                 .par_chunks_mut(4096)
                 .enumerate()
@@ -1413,6 +1568,7 @@ impl ShamirShare {
         Ok(output_buffer)
     }
 
+
     /// Optimized helper method to reconstruct a single chunk from share buffers with precomputed coefficients
     #[inline]
     fn reconstruct_chunk_with_coefficients<'a>(
@@ -1424,14 +1580,14 @@ impl ShamirShare {
             return Err(ShamirError::InsufficientShares { needed: 2, got: 0 });
         }
 
-        let secret_len = share_chunk_buffers[0].len();
+        let chunk_len = share_chunk_buffers[0].len();
 
         output_buffer.clear();
-        output_buffer.resize(secret_len, 0);
+        output_buffer.resize(chunk_len, 0);
 
         for (share_idx, &coeff) in lagrange_coefficients.iter().enumerate() {
             let share_data = &share_chunk_buffers[share_idx];
-            for byte_idx in 0..secret_len {
+            for byte_idx in 0..chunk_len {
                 output_buffer[byte_idx] ^= (coeff * FiniteField::new(share_data[byte_idx])).0;
             }
         }
@@ -1456,38 +1612,72 @@ impl ShamirShare {
     /// - Constant-time evaluation using Horner's method
     /// - Zero constant term ensures deltas maintain the underlying secret unchanged
     fn generate_zero_polynomial_shares(
-        &mut self,
+        &self,
         share_indices: &[u8],
         data_length: usize,
     ) -> Result<Vec<Zeroizing<Vec<u8>>>> {
         let t = self.threshold as usize;
         let num_coeffs = data_length.checked_mul(t - 1).ok_or_else(|| {
-            ShamirError::StorageError("Data length overflow in zero polynomial".into())
+            ShamirError::InvalidConfig("Data length overflow in zero polynomial".into())
         })?;
 
         let mut random_data = Zeroizing::new(vec![0u8; num_coeffs]);
-        self.rng.fill_bytes(&mut random_data);
+        let mut rng = Self::local_rng()?;
+        rng.fill_bytes(&mut random_data);
 
-        let delta_shares: Vec<Zeroizing<Vec<u8>>> = share_indices
-            .par_iter()
-            .map(|&index| {
-                let x = FiniteField::new(index);
-                let delta: Vec<u8> = (0..data_length)
-                    .map(|byte_idx| {
-                        let mut acc = FiniteField::new(0);
-                        for j in (1..t).rev() {
-                            let coeff = FiniteField::new(random_data[byte_idx * (t - 1) + (j - 1)]);
-                            acc = acc * x + coeff;
-                        }
-                        acc = acc * x;
-                        acc.0
-                    })
-                    .collect();
-                Zeroizing::new(delta)
-            })
-            .collect();
+        let eval_delta = |&index: &u8| -> Zeroizing<Vec<u8>> {
+            let x = FiniteField::new(index);
+            let delta: Vec<u8> = (0..data_length)
+                .map(|byte_idx| {
+                    let mut acc = FiniteField::new(random_data[byte_idx * (t - 1) + (t - 2)]);
+                    for j in (1..t - 1).rev() {
+                        let coeff = FiniteField::new(random_data[byte_idx * (t - 1) + (j - 1)]);
+                        acc = acc * x + coeff;
+                    }
+                    acc = acc * x;
+                    acc.0
+                })
+                .collect();
+            Zeroizing::new(delta)
+        };
+
+        let delta_shares: Vec<Zeroizing<Vec<u8>>> = match self.config.mode() {
+            SplitMode::Parallel => share_indices.par_iter().map(eval_delta).collect(),
+            SplitMode::Sequential => share_indices.iter().map(eval_delta).collect(),
+        };
 
         Ok(delta_shares)
+    }
+
+    /// Generates zero-polynomial delta shares for proactive secret sharing without accessing existing shares
+    ///
+    /// This method generates evaluation deltas $Q(x)$ where $Q(0) = 0$ for each requested share index.
+    /// Coordinators can generate these deltas and distribute $\Delta_i$ to each share holder without ever
+    /// gathering secret shares into a single central process memory.
+    pub fn generate_refresh_deltas(
+        &self,
+        share_indices: &[u8],
+        data_length: usize,
+    ) -> Result<Vec<Share>> {
+        for &index in share_indices {
+            if index == 0 || index > self.total_shares {
+                return Err(ShamirError::InvalidShareIndex(index));
+            }
+        }
+        let deltas = self.generate_zero_polynomial_shares(share_indices, data_length)?;
+        let result = share_indices
+            .iter()
+            .zip(deltas)
+            .map(|(&index, delta)| Share {
+                index,
+                data: delta.to_vec(),
+                threshold: self.threshold,
+                total_shares: self.total_shares,
+                integrity_check: self.config.integrity_check(),
+                compression: self.config.compression(),
+            })
+            .collect();
+        Ok(result)
     }
 
     /// Refreshes existing shares by adding zero-polynomial deltas to invalidate old shares
@@ -1533,10 +1723,12 @@ impl ShamirShare {
     /// // But share data is completely different
     /// assert_ne!(original_shares[0].data, refreshed_shares[0].data);
     /// ```
-    pub fn refresh_shares(&mut self, shares: &[Share]) -> Result<Vec<Share>> {
-        self.reseed_rng()?;
+    pub fn refresh_shares(&self, shares: &[Share]) -> Result<Vec<Share>> {
         if shares.is_empty() {
-            return Err(ShamirError::InsufficientShares { needed: 1, got: 0 });
+            return Err(ShamirError::InsufficientShares {
+                needed: self.total_shares,
+                got: 0,
+            });
         }
 
         if shares.len() < self.total_shares as usize {
@@ -1577,30 +1769,18 @@ impl ShamirShare {
             }
         }
 
+        // Verify share consistency before refreshing so corrupted shares are not silently masked
+        if self.config.integrity_check() {
+            Self::reconstruct(&shares[0..self.threshold as usize])?;
+        }
+
         let indices: Vec<u8> = shares.iter().map(|s| s.index).collect();
         let deltas = self.generate_zero_polynomial_shares(&indices, data_length)?;
 
-        let refreshed_shares: Vec<Share> = shares
-            .iter()
-            .zip(deltas.iter())
-            .map(|(old_share, delta_data)| {
-                let new_data: Vec<u8> = old_share
-                    .data
-                    .iter()
-                    .zip(delta_data.iter())
-                    .map(|(&old_byte, &delta_byte)| old_byte ^ delta_byte)
-                    .collect();
-
-                Share {
-                    index: old_share.index,
-                    data: new_data,
-                    threshold: old_share.threshold,
-                    total_shares: old_share.total_shares,
-                    integrity_check: old_share.integrity_check,
-                    compression: old_share.compression,
-                }
-            })
-            .collect();
+        let mut refreshed_shares = shares.to_vec();
+        for (share, delta) in refreshed_shares.iter_mut().zip(&deltas) {
+            share.apply_refresh_delta(delta)?;
+        }
 
         Ok(refreshed_shares)
     }
@@ -1623,15 +1803,12 @@ impl Iterator for Dealer {
 
         let share_data: Vec<u8> = (0..secret_len)
             .map(|byte_idx| {
-                let mut acc = FiniteField::new(0);
-                for j in (0..t).rev() {
-                    let coeff = if j == 0 {
-                        FiniteField::new(self.data[byte_idx])
-                    } else {
-                        FiniteField::new(self.coefficients[byte_idx * (t - 1) + (j - 1)])
-                    };
+                let mut acc = FiniteField::new(self.coefficients[byte_idx * (t - 1) + (t - 2)]);
+                for j in (1..t - 1).rev() {
+                    let coeff = FiniteField::new(self.coefficients[byte_idx * (t - 1) + (j - 1)]);
                     acc = acc * x + coeff;
                 }
+                acc = acc * x + FiniteField::new(self.data[byte_idx]);
                 acc.0
             })
             .collect();
@@ -1647,6 +1824,11 @@ impl Iterator for Dealer {
 
         if self.current_x >= self.total_shares {
             self.current_x = 0;
+            #[cfg(feature = "zeroize")]
+            {
+                self.data.zeroize();
+                self.coefficients.zeroize();
+            }
         } else {
             self.current_x += 1;
         }
@@ -1679,7 +1861,7 @@ mod tests {
     #[test]
     fn test_split_and_reconstruct() {
         let secret = b"Hello, World!";
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
         // Split the secret into 5 shares
         let shares = shamir.split(secret).unwrap();
@@ -1709,7 +1891,7 @@ mod tests {
     #[test]
     fn test_insufficient_shares() {
         let secret = b"Test";
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(secret).unwrap();
 
         // Reconstruct with 2 shares when threshold is 3 should fail
@@ -1719,7 +1901,7 @@ mod tests {
     #[test]
     fn test_different_share_combinations() {
         let secret = b"Different combinations test";
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(secret).unwrap();
 
         // Try different combinations of 3 shares
@@ -1735,7 +1917,7 @@ mod tests {
     #[test]
     fn test_empty_secret() {
         let secret = b"";
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(secret).unwrap();
         let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
         assert_eq!(reconstructed, secret);
@@ -1744,7 +1926,7 @@ mod tests {
     #[test]
     fn test_single_byte_secret() {
         let secret = b"x";
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(secret).unwrap();
         let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
         assert_eq!(reconstructed, secret);
@@ -1753,7 +1935,7 @@ mod tests {
     #[test]
     fn test_max_shares() {
         let secret = b"Maximum shares test";
-        let mut shamir = ShamirShare::builder(255, 128).build().unwrap();
+        let shamir = ShamirShare::builder(255, 128).build().unwrap();
         let shares = shamir.split(secret).unwrap();
         assert_eq!(shares.len(), 255);
 
@@ -1763,7 +1945,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_share_indices() {
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(b"test").unwrap();
 
         let mut corrupted_shares = shares[0..3].to_vec();
@@ -1777,7 +1959,7 @@ mod tests {
 
     #[test]
     fn test_zero_share_index_rejected_in_reconstruct() {
-        let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+        let shamir = ShamirShare::builder(3, 2).build().unwrap();
         let mut shares = shamir.split(b"test").unwrap();
         shares[0].index = 0;
 
@@ -1789,7 +1971,7 @@ mod tests {
 
     #[test]
     fn test_corrupted_share_data() {
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let mut shares = shamir.split(b"test").unwrap();
 
         if shares[0].data[0] == 0 {
@@ -1835,7 +2017,7 @@ mod tests {
     #[test]
     fn test_integrity_check_disabled() {
         let config = Config::new().with_integrity_check(false);
-        let mut shamir = ShamirShare::builder(5, 3)
+        let shamir = ShamirShare::builder(5, 3)
             .with_config(config)
             .build()
             .unwrap();
@@ -1850,8 +2032,8 @@ mod tests {
 
     #[test]
     fn test_mixed_integrity_flags_fail() {
-        let mut shamir_with = ShamirShare::builder(5, 3).build().unwrap();
-        let mut shamir_without = ShamirShare::builder(5, 3)
+        let shamir_with = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir_without = ShamirShare::builder(5, 3)
             .with_config(Config::new().with_integrity_check(false))
             .build()
             .unwrap();
@@ -1895,7 +2077,7 @@ mod tests {
     fn test_split_stream_basic() {
         use std::io::Cursor;
 
-        let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+        let shamir = ShamirShare::builder(3, 2).build().unwrap();
         let data = b"This is a test message for streaming functionality";
         let mut source = Cursor::new(data);
 
@@ -1932,7 +2114,7 @@ mod tests {
         use std::io::Cursor;
 
         let config = Config::new().with_chunk_size(10).unwrap();
-        let mut shamir = ShamirShare::builder(3, 2)
+        let shamir = ShamirShare::builder(3, 2)
             .with_config(config)
             .build()
             .unwrap();
@@ -1968,7 +2150,7 @@ mod tests {
     fn test_empty_input_streaming() {
         use std::io::Cursor;
 
-        let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+        let shamir = ShamirShare::builder(3, 2).build().unwrap();
         let data = b"";
         let mut source = Cursor::new(data);
 
@@ -2006,7 +2188,7 @@ mod tests {
         use std::io::Cursor;
 
         let config = Config::new().with_chunk_size(5).unwrap();
-        let mut shamir = ShamirShare::builder(3, 2)
+        let shamir = ShamirShare::builder(3, 2)
             .with_config(config)
             .build()
             .unwrap();
@@ -2068,7 +2250,7 @@ mod tests {
     #[test]
     fn test_dealer_basic_functionality() {
         let secret = b"Hello, Dealer!";
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
         let dealer_shares: Vec<Share> = shamir.try_dealer(secret).unwrap().take(5).collect();
         assert_eq!(dealer_shares.len(), 5);
@@ -2087,7 +2269,7 @@ mod tests {
     #[test]
     fn test_dealer_size_hint() {
         let secret = b"Size hint test";
-        let mut shamir = ShamirShare::builder(10, 5).build().unwrap();
+        let shamir = ShamirShare::builder(10, 5).build().unwrap();
 
         let mut dealer = shamir.try_dealer(secret).unwrap();
 
@@ -2102,7 +2284,7 @@ mod tests {
     #[test]
     fn test_dealer_exhaustion() {
         let secret = b"Stop at total shares";
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
         let mut dealer = shamir.try_dealer(secret).unwrap();
         let shares: Vec<Share> = dealer.by_ref().collect();
@@ -2113,7 +2295,7 @@ mod tests {
     #[test]
     fn test_parallel_split_mode() {
         let config = Config::new().with_mode(SplitMode::Parallel);
-        let mut shamir = ShamirShare::builder(5, 3)
+        let shamir = ShamirShare::builder(5, 3)
             .with_config(config)
             .build()
             .unwrap();
@@ -2151,7 +2333,7 @@ mod tests {
 
     #[test]
     fn test_reconstruct_share_index_bounds() {
-        let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+        let shamir = ShamirShare::builder(3, 2).build().unwrap();
         let secret = b"Index bounds test";
         let mut shares = shamir.split(secret).unwrap();
 
@@ -2172,7 +2354,7 @@ mod tests {
 
     #[test]
     fn test_reconstruct_excess_shares() {
-        let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+        let shamir = ShamirShare::builder(3, 2).build().unwrap();
         let secret = b"Excess shares test";
         let mut shares = shamir.split(secret).unwrap();
         shares.push(shares[0].clone());

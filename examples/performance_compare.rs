@@ -31,7 +31,7 @@ fn test_threshold_configuration(n: u8, k: u8, test_sizes: &[usize], iterations: 
 
         for _ in 0..iterations {
             // Test split performance
-            let mut shamir = ShamirShare::builder(n, k).build().unwrap();
+            let shamir = ShamirShare::builder(n, k).build().unwrap();
             let start = Instant::now();
             let shares = shamir.split(&data).unwrap();
             total_split_time += start.elapsed().as_nanos();

@@ -5,7 +5,7 @@ use shamir_share::{Config, ShamirShare};
 #[test]
 fn test_compression_e2e() {
     let config = Config::new().with_compression(true);
-    let mut shamir = ShamirShare::builder(5, 3)
+    let shamir = ShamirShare::builder(5, 3)
         .with_config(config)
         .build()
         .unwrap();
@@ -20,12 +20,12 @@ fn test_compression_e2e() {
 #[test]
 fn test_highly_compressible_data() {
     let config = Config::new().with_compression(true);
-    let mut shamir_compressed = ShamirShare::builder(5, 3)
+    let shamir_compressed = ShamirShare::builder(5, 3)
         .with_config(config)
         .build()
         .unwrap();
 
-    let mut shamir_uncompressed = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir_uncompressed = ShamirShare::builder(5, 3).build().unwrap();
 
     let secret = vec![0; 1024];
     let compressed_shares = shamir_compressed.split(&secret).unwrap();
@@ -43,7 +43,7 @@ fn test_highly_compressible_data() {
 #[test]
 fn test_incompressible_data() {
     let config = Config::new().with_compression(true);
-    let mut shamir = ShamirShare::builder(5, 3)
+    let shamir = ShamirShare::builder(5, 3)
         .with_config(config)
         .build()
         .unwrap();
@@ -60,7 +60,7 @@ fn test_streaming_with_compression() {
     use std::io::Cursor;
 
     let config = Config::new().with_compression(true);
-    let mut shamir = ShamirShare::builder(3, 2)
+    let shamir = ShamirShare::builder(3, 2)
         .with_config(config)
         .build()
         .unwrap();
@@ -102,7 +102,7 @@ fn test_decompression_bomb_rejected() {
     let large_zeros = vec![0u8; 65 * 1024 * 1024];
     let compressed_bomb = zstd::encode_all(&large_zeros[..], 1).unwrap();
 
-    let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+    let shamir = ShamirShare::builder(3, 2).build().unwrap();
     let mut bomb_shares = shamir.split(&compressed_bomb).unwrap();
 
     // Re-label shares as having compression: true

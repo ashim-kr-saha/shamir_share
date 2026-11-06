@@ -1,0 +1,215 @@
+use shamir_share::{
+    Config, FileShareStore, FiniteField, HierarchicalShare, Hsss, ShamirError, ShamirShare, Share,
+    ShareStore, MAX_CONFIG_CHUNK_SIZE,
+};
+use subtle::ConstantTimeEq;
+use std::io::Cursor;
+use tempfile::tempdir;
+
+#[test]
+fn test_f01_hsss_rejects_forged_metadata() {
+    let hsss = Hsss::builder(5)
+        .add_level("President", 5)
+        .build()
+        .unwrap();
+
+    let attacker_scheme = ShamirShare::builder(2, 2).build().unwrap();
+    let forged_shares = attacker_scheme.split(b"attacker secret").unwrap();
+    let forged = HierarchicalShare::new("Contractor", forged_shares);
+
+    // Previously succeeded with 2 shares even though master_threshold is 5!
+    let result = hsss.reconstruct(&[forged]);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        ShamirError::InvalidShareFormat | ShamirError::InsufficientShares { .. } => {}
+        other => panic!("Expected InvalidShareFormat or InsufficientShares, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_f02_reconstruct_with_scheme_enforces_policy() {
+    let scheme = ShamirShare::builder(5, 3)
+        .with_config(Config::new().with_integrity_check(true))
+        .build()
+        .unwrap();
+
+    let shares = scheme.split(b"sensitive payload").unwrap();
+
+    // 1. Tampering with threshold in share header
+    let mut forged_threshold_shares = shares.clone();
+    for s in &mut forged_threshold_shares {
+        s.threshold = 2;
+    }
+    assert!(matches!(
+        scheme.reconstruct_with_scheme(&forged_threshold_shares[0..3]),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // 2. Tampering with integrity flag in share header
+    let mut stripped_integrity_shares = shares.clone();
+    for s in &mut stripped_integrity_shares {
+        s.integrity_check = false;
+    }
+    assert!(matches!(
+        scheme.reconstruct_with_scheme(&stripped_integrity_shares[0..3]),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // 3. Valid reconstruction with scheme
+    let reconstructed = scheme.reconstruct_with_scheme(&shares[0..3]).unwrap();
+    assert_eq!(reconstructed, b"sensitive payload");
+}
+
+#[test]
+fn test_f02_reconstruct_stream_with_scheme_enforces_policy() {
+    let scheme = ShamirShare::builder(3, 2)
+        .with_config(Config::new().with_integrity_check(true))
+        .build()
+        .unwrap();
+
+    let secret = b"streaming payload data";
+    let mut writers = vec![Cursor::new(Vec::new()), Cursor::new(Vec::new()), Cursor::new(Vec::new())];
+    scheme.split_stream(&mut Cursor::new(secret), &mut writers).unwrap();
+
+    let other_scheme = ShamirShare::builder(5, 3)
+        .with_config(Config::new().with_integrity_check(true))
+        .build()
+        .unwrap();
+
+    let mut readers: Vec<Cursor<Vec<u8>>> = writers.into_iter().map(|w| Cursor::new(w.into_inner())).collect();
+    let mut out = Cursor::new(Vec::new());
+
+    // Trying to reconstruct 3-of-2 stream with 5-of-3 scheme must fail
+    let err = other_scheme.reconstruct_stream_with_scheme(&mut readers[0..3], &mut out);
+    assert!(matches!(err, Err(ShamirError::InvalidShareFormat)));
+}
+
+#[cfg(feature = "compress")]
+#[test]
+fn test_f03_stream_decompression_total_limit() {
+    // Configure limit to 100 bytes
+    let config = Config::new()
+        .with_compression(true)
+        .with_max_decompressed_stream_size(100);
+
+    let scheme = ShamirShare::builder(3, 2)
+        .with_config(config)
+        .build()
+        .unwrap();
+
+    let secret = vec![b'A'; 200];
+    let mut writers = vec![Cursor::new(Vec::new()), Cursor::new(Vec::new()), Cursor::new(Vec::new())];
+    scheme.split_stream(&mut Cursor::new(&secret), &mut writers).unwrap();
+
+    let mut readers: Vec<Cursor<Vec<u8>>> = writers.into_iter().map(|w| Cursor::new(w.into_inner())).collect();
+    let mut out = Cursor::new(Vec::new());
+
+    let err = scheme.reconstruct_stream_with_scheme(&mut readers[0..2], &mut out);
+    assert!(matches!(err, Err(ShamirError::DecompressionError(_))));
+}
+
+#[test]
+fn test_f04_reconstruct_spare_capacity_zero() {
+    let scheme = ShamirShare::builder(5, 3)
+        .with_config(Config::new().with_integrity_check(true))
+        .build()
+        .unwrap();
+
+    let secret = b"exact capacity test secret";
+    let shares = scheme.split(secret).unwrap();
+    let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
+
+    assert_eq!(&reconstructed[..], secret);
+    // Ensure no spare heap capacity leaks plaintext remnants
+    assert_eq!(reconstructed.len(), reconstructed.capacity());
+}
+
+#[test]
+fn test_f06_decentralized_refresh_deltas() {
+    let scheme = ShamirShare::builder(5, 3)
+        .with_config(Config::new().with_integrity_check(true))
+        .build()
+        .unwrap();
+
+    let secret = b"confidential cluster secret";
+    let mut shares = scheme.split(secret).unwrap();
+    let data_len = shares[0].data.len();
+
+    // Coordinator generates zero-sum deltas knowing only indices and length
+    let deltas = scheme.generate_refresh_deltas(&[1, 2, 3, 4, 5], data_len).unwrap();
+    assert_eq!(deltas.len(), 5);
+
+    // Each participant applies its delta locally
+    for (share, delta) in shares.iter_mut().zip(deltas.iter()) {
+        assert_eq!(share.index, delta.index);
+        share.apply_refresh_delta(&delta.data).unwrap();
+    }
+
+    // Reconstruct with refreshed shares
+    let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
+    assert_eq!(&reconstructed[..], secret);
+
+    // Reconstruct with different subset
+    let reconstructed_alt = ShamirShare::reconstruct(&shares[2..5]).unwrap();
+    assert_eq!(&reconstructed_alt[..], secret);
+}
+
+#[test]
+fn test_f07_split_rejects_oversized_secret() {
+    let oversized_len = MAX_CONFIG_CHUNK_SIZE + 1;
+    let config_res = Config::new().with_chunk_size(oversized_len);
+    assert!(matches!(config_res, Err(ShamirError::InvalidConfig(_))));
+}
+
+#[test]
+fn test_f08_constant_time_traits() {
+    let a = FiniteField::new(42);
+    let b = FiniteField::new(42);
+    let c = FiniteField::new(43);
+
+    assert_eq!(a.ct_eq(&b).unwrap_u8(), 1);
+    assert_eq!(a.ct_eq(&c).unwrap_u8(), 0);
+
+    let inv = a.ct_inverse();
+    assert!(bool::from(inv.is_some()));
+    assert_eq!(a * inv.unwrap(), FiniteField::new(1));
+
+    let zero = FiniteField::new(0);
+    assert!(bool::from(zero.ct_inverse().is_none()));
+}
+
+#[test]
+fn test_f11_storage_trailing_bytes_and_permissions() {
+    let temp = tempdir().unwrap();
+    let share_dir = temp.path().join("secure_shares");
+    let mut store = FileShareStore::new(&share_dir).unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let metadata = std::fs::metadata(&share_dir).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+    }
+
+    let share = Share::new(1, vec![10, 20, 30], 3, 5, false, false);
+    store.store_share(&share).unwrap();
+
+    // Append malicious trailing byte to share file
+    let share_path = share_dir.join("share_001");
+    let mut bytes = std::fs::read(&share_path).unwrap();
+    bytes.push(0xFF);
+    std::fs::write(&share_path, bytes).unwrap();
+
+    let load_res = store.load_share(1);
+    assert!(matches!(load_res, Err(ShamirError::InvalidShareFormat)));
+}
+
+#[test]
+fn test_f13_error_needed_on_empty_reconstruct() {
+    let err = ShamirShare::reconstruct(&[]).unwrap_err();
+    assert!(matches!(err, ShamirError::InsufficientShares { needed: 2, got: 0 }));
+
+    let scheme = ShamirShare::builder(5, 3).build().unwrap();
+    let err_scheme = scheme.reconstruct_with_scheme(&[]).unwrap_err();
+    assert!(matches!(err_scheme, ShamirError::InsufficientShares { needed: 3, got: 0 }));
+}

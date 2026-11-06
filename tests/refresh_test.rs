@@ -3,7 +3,7 @@ use shamir_share::{Config, ShamirError, ShamirShare};
 #[test]
 fn test_refreshed_shares_reconstruct_correctly() {
     // Create a ShamirShare instance with threshold 3 out of 5 shares
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Define a test secret
     let secret = b"This is a secret message that should be preserved after refreshing";
@@ -24,7 +24,7 @@ fn test_refreshed_shares_reconstruct_correctly() {
 #[test]
 fn test_refreshed_shares_are_different_from_original() {
     // Create a ShamirShare instance
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Define a test secret
     let secret = b"Different data test";
@@ -62,7 +62,7 @@ fn test_refreshed_shares_are_different_from_original() {
 #[test]
 fn test_mixing_old_and_new_shares_fails_reconstruction() {
     // Create a ShamirShare instance with integrity checking enabled (default)
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Define a test secret
     let secret = b"Mixed shares should fail";
@@ -103,7 +103,7 @@ fn test_mixing_old_and_new_shares_fails_reconstruction() {
 fn test_mixing_old_and_new_shares_fails_reconstruction_no_integrity() {
     // Create a ShamirShare instance with integrity checking disabled
     let config = Config::new().with_integrity_check(false);
-    let mut shamir = ShamirShare::builder(5, 3)
+    let shamir = ShamirShare::builder(5, 3)
         .with_config(config)
         .build()
         .unwrap();
@@ -139,7 +139,7 @@ fn test_mixing_old_and_new_shares_fails_reconstruction_no_integrity() {
 
 #[test]
 fn test_partial_refresh_shares_fails() {
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
     let secret = b"Partial refresh should be rejected";
     let shares = shamir.split(secret).unwrap();
 
@@ -154,7 +154,7 @@ fn test_partial_refresh_shares_fails() {
 #[test]
 fn test_refresh_with_insufficient_shares_errors() {
     // Create a scheme with threshold k=3, total n=5
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Define a test secret
     let secret = b"Insufficient shares test";
@@ -179,7 +179,7 @@ fn test_refresh_with_insufficient_shares_errors() {
 #[test]
 fn test_refresh_with_empty_shares_errors() {
     // Create a ShamirShare instance
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Call refresh_shares with an empty slice
     let result = shamir.refresh_shares(&[]);
@@ -188,7 +188,7 @@ fn test_refresh_with_empty_shares_errors() {
     assert!(result.is_err());
     match result.unwrap_err() {
         ShamirError::InsufficientShares { needed, got } => {
-            assert_eq!(needed, 1);
+            assert_eq!(needed, 5);
             assert_eq!(got, 0);
         }
         other => panic!("Expected InsufficientShares error, got: {:?}", other),
@@ -198,7 +198,7 @@ fn test_refresh_with_empty_shares_errors() {
 #[test]
 fn test_refresh_preserves_share_metadata() {
     // Create a ShamirShare instance
-    let mut shamir = ShamirShare::builder(7, 4).build().unwrap();
+    let shamir = ShamirShare::builder(7, 4).build().unwrap();
 
     // Define a test secret
     let secret = b"Metadata preservation test";
@@ -227,7 +227,7 @@ fn test_refresh_preserves_share_metadata() {
 #[test]
 fn test_multiple_refresh_rounds() {
     // Create a ShamirShare instance
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Define a test secret
     let secret = b"Multiple refresh rounds test";
@@ -265,7 +265,7 @@ fn test_multiple_refresh_rounds() {
 #[test]
 fn test_refresh_with_inconsistent_share_lengths() {
     // Create a ShamirShare instance
-    let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+    let shamir = ShamirShare::builder(3, 2).build().unwrap();
 
     let secret1 = b"short";
     let secret2 = b"this is a much longer secret";
@@ -295,7 +295,7 @@ fn test_refresh_with_inconsistent_share_lengths() {
 
 #[test]
 fn test_refresh_with_excess_shares_errors() {
-    let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+    let shamir = ShamirShare::builder(3, 2).build().unwrap();
     let secret = b"excess shares test";
     let mut shares = shamir.split(secret).unwrap();
     shares.push(shares[0].clone());
@@ -306,7 +306,7 @@ fn test_refresh_with_excess_shares_errors() {
 
 #[test]
 fn test_refresh_with_index_out_of_bounds_errors() {
-    let mut shamir = ShamirShare::builder(3, 2).build().unwrap();
+    let shamir = ShamirShare::builder(3, 2).build().unwrap();
     let secret = b"out of bounds index test";
     let mut shares = shamir.split(secret).unwrap();
     shares[2].index = 4; // total_shares is 3

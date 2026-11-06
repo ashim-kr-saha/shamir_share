@@ -65,6 +65,35 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "zeroize")]
+pub(crate) use zeroize::Zeroizing;
+
+#[cfg(not(feature = "zeroize"))]
+#[derive(Debug, Clone)]
+pub(crate) struct Zeroizing<T>(pub T);
+
+#[cfg(not(feature = "zeroize"))]
+impl<T> Zeroizing<T> {
+    pub fn new(val: T) -> Self {
+        Self(val)
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl<T> std::ops::Deref for Zeroizing<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl<T> std::ops::DerefMut for Zeroizing<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 mod config;
 mod error;
 mod finite_field;
@@ -72,7 +101,7 @@ pub mod hsss;
 mod shamir;
 mod storage;
 
-pub use config::{Config, SplitMode};
+pub use config::{Config, SplitMode, MAX_CONFIG_CHUNK_SIZE, MAX_DEFAULT_STREAM_DECOMPRESSED_SIZE};
 pub use error::{Result, ShamirError};
 pub use finite_field::FiniteField;
 pub use hsss::{AccessLevel, HierarchicalShare, Hsss, HsssBuilder};
@@ -102,7 +131,7 @@ mod tests {
         let secret = b"This is a secret message that needs to be protected!";
 
         // Configure Shamir's Secret Sharing
-        let mut shamir = ShamirShare::builder(5, 3).build()?;
+        let shamir = ShamirShare::builder(5, 3).build()?;
 
         // Split the secret into shares
         let shares = shamir.split(secret)?;
@@ -148,7 +177,7 @@ mod tests {
 
         // Create and split secret
         let secret = b"Secret data with custom configuration";
-        let mut shamir = ShamirShare::builder(5, 3).with_config(config).build()?;
+        let shamir = ShamirShare::builder(5, 3).with_config(config).build()?;
         let shares = shamir.split(secret)?;
 
         // Store and reconstruct
@@ -176,7 +205,7 @@ mod tests {
         ));
 
         // Test invalid share reconstruction
-        let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+        let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(b"test").unwrap();
 
         // Try to reconstruct with insufficient shares

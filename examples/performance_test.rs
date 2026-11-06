@@ -18,7 +18,7 @@ fn main() {
 
         for _ in 0..iterations {
             // Test split performance
-            let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+            let shamir = ShamirShare::builder(5, 3).build().unwrap();
             let start = Instant::now();
             let shares = shamir.split(&data).unwrap();
             total_split_time += start.elapsed().as_nanos();

@@ -19,7 +19,7 @@ fn bench_refresh_shares(c: &mut Criterion) {
         let secret = create_test_secret();
 
         // Create shares to refresh (using threshold = share_count for maximum work)
-        let mut shamir = ShamirShare::builder(share_count as u8, share_count as u8)
+        let shamir = ShamirShare::builder(share_count as u8, share_count as u8)
             .build()
             .unwrap();
         let shares = shamir.split(&secret).unwrap();
@@ -50,7 +50,7 @@ fn bench_refresh_shares_data_size(c: &mut Criterion) {
     for &data_size in DATA_SIZES {
         let secret: Vec<u8> = (0..data_size).map(|i| (i % 256) as u8).collect();
 
-        let mut shamir = ShamirShare::builder(SHARE_COUNT, SHARE_COUNT)
+        let shamir = ShamirShare::builder(SHARE_COUNT, SHARE_COUNT)
             .build()
             .unwrap();
         let shares = shamir.split(&secret).unwrap();
@@ -77,7 +77,7 @@ fn bench_refresh_vs_split(c: &mut Criterion) {
     const SHARE_COUNT: u8 = 100;
     let secret = create_test_secret();
 
-    let mut shamir = ShamirShare::builder(SHARE_COUNT, SHARE_COUNT)
+    let shamir = ShamirShare::builder(SHARE_COUNT, SHARE_COUNT)
         .build()
         .unwrap();
     let shares = shamir.split(&secret).unwrap();

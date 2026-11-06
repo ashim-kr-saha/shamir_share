@@ -33,6 +33,8 @@ use crate::config::Config;
 use crate::error::{Result, ShamirError};
 use crate::shamir::{ShamirShare, Share};
 
+use subtle::{Choice, ConstantTimeEq};
+
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -57,6 +59,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 ///     shares_count: 3,
 /// };
 /// ```
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub struct AccessLevel {
@@ -64,6 +67,16 @@ pub struct AccessLevel {
     pub name: String,
     /// Number of shares that participants at this level should receive
     pub shares_count: u8,
+}
+
+impl AccessLevel {
+    /// Creates a new access level with the given name and share count
+    pub fn new(name: impl Into<String>, shares_count: u8) -> Self {
+        Self {
+            name: name.into(),
+            shares_count,
+        }
+    }
 }
 
 /// Represents the actual shares assigned to a participant in the hierarchical scheme
@@ -78,18 +91,60 @@ pub struct AccessLevel {
 /// use shamir_share::Share;
 ///
 /// // This would typically be created by the HSSS system
-/// let hierarchical_share = HierarchicalShare {
-///     level_name: "President".to_string(),
-///     shares: vec![], // Would contain actual Share objects
-/// };
+/// let hierarchical_share = HierarchicalShare::new("President", vec![]);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 pub struct HierarchicalShare {
     /// Name of the access level this share set belongs to
     pub level_name: String,
     /// The actual cryptographic shares for this participant
     pub shares: Vec<Share>,
+}
+
+impl HierarchicalShare {
+    /// Creates a new hierarchical share set
+    pub fn new(level_name: impl Into<String>, shares: Vec<Share>) -> Self {
+        Self {
+            level_name: level_name.into(),
+            shares,
+        }
+    }
+}
+
+impl ConstantTimeEq for HierarchicalShare {
+    fn ct_eq(&self, other: &Self) -> Choice {
+        let name_eq = self.level_name.as_bytes().ct_eq(other.level_name.as_bytes());
+        let len_eq = (self.shares.len() as u64).ct_eq(&(other.shares.len() as u64));
+        let shares_eq = if self.shares.len() == other.shares.len() {
+            let mut acc = Choice::from(1);
+            for (s1, s2) in self.shares.iter().zip(&other.shares) {
+                acc &= s1.ct_eq(s2);
+            }
+            acc
+        } else {
+            Choice::from(0)
+        };
+        name_eq & len_eq & shares_eq
+    }
+}
+
+impl PartialEq for HierarchicalShare {
+    fn eq(&self, other: &Self) -> bool {
+        bool::from(self.ct_eq(other))
+    }
+}
+
+impl Eq for HierarchicalShare {}
+
+impl std::fmt::Debug for HierarchicalShare {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HierarchicalShare")
+            .field("level_name", &self.level_name)
+            .field("shares_count", &self.shares.len())
+            .finish()
+    }
 }
 
 /// Main Hierarchical Secret Sharing Scheme implementation
@@ -426,9 +481,7 @@ impl Hsss {
     ///
     /// # Performance
     /// This implementation:
-    /// - Uses the optimized Shamir implementation which already employs columnar processing
-    /// - Generates all shares at once to avoid repeated polynomial evaluations
-    /// - Provides significantly better performance than the previous iterative approach
+    /// - Uses the underlying Shamir scheme to generate all shares at once
     /// - Maintains identical security properties and output
     ///
     /// # Errors
@@ -466,8 +519,6 @@ impl Hsss {
     /// - Constant-time operations prevent side-channel attacks
     /// - Each share reveals no information about the secret without meeting the threshold
     pub fn split_secret(&mut self, secret: &[u8]) -> Result<Vec<HierarchicalShare>> {
-        // Generate all master shares at once using the optimized Shamir implementation
-        // This is much more efficient than the previous dealer-based approach
         let all_master_shares = self.master_scheme.split(secret)?;
 
         // Distribute master shares to hierarchical levels
@@ -571,8 +622,16 @@ impl Hsss {
             }
         }
 
-        // Use the zero-copy ShareView reconstruction method
-        ShamirShare::reconstruct_from_views(&all_views)
+        if all_views.is_empty() {
+            return Err(ShamirError::InsufficientShares {
+                needed: self.master_threshold(),
+                got: 0,
+            });
+        }
+
+        // Validate strictly against master scheme parameters
+        self.master_scheme
+            .reconstruct_from_views_with_scheme(&all_views)
     }
 }
 
@@ -997,7 +1056,7 @@ mod tests {
         let result = hsss.reconstruct(&[]);
         assert!(matches!(
             result,
-            Err(ShamirError::InsufficientShares { needed: 1, got: 0 })
+            Err(ShamirError::InsufficientShares { needed: 5, got: 0 })
         ));
     }
 

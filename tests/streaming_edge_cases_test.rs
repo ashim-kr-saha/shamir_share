@@ -4,7 +4,7 @@ use std::io::Cursor;
 #[test]
 fn test_streaming_with_empty_source() {
     // Test streaming with a 0-byte input. The reconstructed output should also be 0 bytes.
-    let mut scheme = ShamirShare::builder(3, 2).build().unwrap();
+    let scheme = ShamirShare::builder(3, 2).build().unwrap();
 
     // Create empty source data
     let source_data = Vec::new();
@@ -38,7 +38,7 @@ fn test_streaming_with_empty_source() {
 fn test_streaming_with_data_smaller_than_chunk_size() {
     // Configure the scheme with a chunk_size of 1024. Test with a 100-byte secret.
     let config = Config::new().with_chunk_size(1024).unwrap();
-    let mut scheme = ShamirShare::builder(3, 2)
+    let scheme = ShamirShare::builder(3, 2)
         .with_config(config)
         .build()
         .unwrap();
@@ -73,7 +73,7 @@ fn test_streaming_with_data_smaller_than_chunk_size() {
 fn test_streaming_with_non_aligned_data() {
     // Configure with chunk_size of 128. Test with a 300-byte secret (not a multiple of 128).
     let config = Config::new().with_chunk_size(128).unwrap();
-    let mut scheme = ShamirShare::builder(3, 2)
+    let scheme = ShamirShare::builder(3, 2)
         .with_config(config)
         .build()
         .unwrap();
@@ -107,7 +107,7 @@ fn test_streaming_with_non_aligned_data() {
 #[test]
 fn test_streaming_integrity_check_failure() {
     // Perform a split_stream, corrupt a byte in the chunk, and expect IntegrityCheckFailed error
-    let mut scheme = ShamirShare::builder(3, 2).build().unwrap();
+    let scheme = ShamirShare::builder(3, 2).build().unwrap();
 
     // Create test data
     let source_data = vec![42u8; 100];
@@ -143,7 +143,7 @@ fn test_streaming_integrity_check_failure() {
 
 #[test]
 fn test_stream_prefix_truncation_rejected() {
-    let mut scheme = ShamirShare::builder(3, 2).build().unwrap();
+    let scheme = ShamirShare::builder(3, 2).build().unwrap();
     let source_data = vec![7u8; 500];
     let mut source = Cursor::new(source_data);
 
@@ -168,7 +168,7 @@ fn test_stream_prefix_truncation_rejected() {
 
 #[test]
 fn test_cross_stream_splicing_rejected() {
-    let mut scheme = ShamirShare::builder(3, 2).build().unwrap();
+    let scheme = ShamirShare::builder(3, 2).build().unwrap();
 
     // Stream 1
     let mut source1 = Cursor::new(vec![1u8; 200]);
@@ -188,12 +188,12 @@ fn test_cross_stream_splicing_rejected() {
     let result = ShamirShare::reconstruct_stream(&mut sources, &mut dest);
 
     assert!(result.is_err());
-    assert!(matches!(result, Err(ShamirError::InvalidConfig(_))));
+    assert!(matches!(result, Err(ShamirError::InvalidShareFormat)));
 }
 
 #[test]
 fn test_corrupted_header_magic_rejected() {
-    let mut scheme = ShamirShare::builder(3, 2).build().unwrap();
+    let scheme = ShamirShare::builder(3, 2).build().unwrap();
     let mut source = Cursor::new(vec![42u8; 100]);
     let mut dests: Vec<_> = (0..3).map(|_| Cursor::new(Vec::new())).collect();
     scheme.split_stream(&mut source, &mut dests).unwrap();
@@ -212,7 +212,7 @@ fn test_corrupted_header_magic_rejected() {
 #[test]
 fn test_split_stream_insufficient_destinations_error() {
     // Create a ShamirShare instance for 5 shares, but provide only 4 destinations
-    let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+    let scheme = ShamirShare::builder(5, 3).build().unwrap();
 
     // Create test data
     let source_data = vec![1, 2, 3, 4, 5];
@@ -231,7 +231,7 @@ fn test_split_stream_insufficient_destinations_error() {
 
 #[test]
 fn test_reconstruct_stream_excess_sources_rejected() {
-    let mut scheme = ShamirShare::builder(3, 2).build().unwrap();
+    let scheme = ShamirShare::builder(3, 2).build().unwrap();
     let mut source = Cursor::new(vec![42u8; 100]);
     let mut dests: Vec<_> = (0..3).map(|_| Cursor::new(Vec::new())).collect();
     scheme.split_stream(&mut source, &mut dests).unwrap();
@@ -251,7 +251,7 @@ fn test_reconstruct_stream_excess_sources_rejected() {
 
 #[test]
 fn test_reconstruct_stream_index_out_of_bounds_rejected() {
-    let mut scheme = ShamirShare::builder(3, 2).build().unwrap();
+    let scheme = ShamirShare::builder(3, 2).build().unwrap();
     let mut source = Cursor::new(vec![42u8; 100]);
     let mut dests: Vec<_> = (0..3).map(|_| Cursor::new(Vec::new())).collect();
     scheme.split_stream(&mut source, &mut dests).unwrap();

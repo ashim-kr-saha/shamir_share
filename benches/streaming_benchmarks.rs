@@ -29,7 +29,7 @@ fn bench_split_stream(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     // Create a fresh scheme for each iteration
-                    let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+                    let scheme = ShamirShare::builder(5, 3).build().unwrap();
 
                     // Create source cursor
                     let mut source = Cursor::new(black_box(&data));
@@ -67,7 +67,7 @@ fn bench_reconstruct_stream(c: &mut Criterion) {
         let data = create_mock_data(size);
 
         // Pre-generate share data for reconstruction benchmarks
-        let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+        let scheme = ShamirShare::builder(5, 3).build().unwrap();
         let mut source = Cursor::new(&data);
         let mut destinations = vec![Vec::new(); 5];
         let mut dest_cursors: Vec<Cursor<Vec<u8>>> = destinations
@@ -131,7 +131,7 @@ fn bench_streaming_vs_memory_comparison(c: &mut Criterion) {
     group.bench_function("in_memory_workflow_100KB", |b| {
         b.iter(|| {
             // Create scheme
-            let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+            let scheme = ShamirShare::builder(5, 3).build().unwrap();
 
             // Split using in-memory method
             let shares = scheme.split(black_box(&data)).unwrap();
@@ -147,7 +147,7 @@ fn bench_streaming_vs_memory_comparison(c: &mut Criterion) {
     group.bench_function("streaming_workflow_100KB", |b| {
         b.iter(|| {
             // Create scheme
-            let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+            let scheme = ShamirShare::builder(5, 3).build().unwrap();
 
             // Split using streaming method
             let mut source = Cursor::new(black_box(&data));
@@ -197,7 +197,7 @@ fn bench_split_stream_chunk_sizes(c: &mut Criterion) {
                 b.iter(|| {
                     // Create scheme with custom chunk size
                     let config = Config::new().with_chunk_size(chunk_size).unwrap();
-                    let mut scheme = ShamirShare::builder(5, 3)
+                    let scheme = ShamirShare::builder(5, 3)
                         .with_config(config)
                         .build()
                         .unwrap();
@@ -239,7 +239,7 @@ fn bench_streaming_integrity_check(c: &mut Criterion) {
     // Benchmark with integrity check enabled (default)
     group.bench_function("with_integrity_check", |b| {
         b.iter(|| {
-            let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+            let scheme = ShamirShare::builder(5, 3).build().unwrap();
 
             let mut source = Cursor::new(black_box(&data));
             let mut destinations = vec![Vec::new(); 5];
@@ -272,7 +272,7 @@ fn bench_streaming_integrity_check(c: &mut Criterion) {
     group.bench_function("without_integrity_check", |b| {
         b.iter(|| {
             let config = Config::new().with_integrity_check(false);
-            let mut scheme = ShamirShare::builder(5, 3)
+            let scheme = ShamirShare::builder(5, 3)
                 .with_config(config)
                 .build()
                 .unwrap();

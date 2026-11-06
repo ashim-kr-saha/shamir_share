@@ -29,6 +29,16 @@ Tests the `FileShareStore::load_share` method with arbitrary file content:
 
 **Goal**: Ensure share parsing never panics and handles malformed files gracefully.
 
+### `fuzz_reconstruct_stream`
+Tests the `ShamirShare::reconstruct_stream` and `reconstruct_stream_with_scheme` methods with arbitrary streaming chunks:
+- Invalid magic headers and version mismatch
+- Truncated stream chunks and partial headers
+- Mismatched stream parameters across sources
+- Compression bomb limits and multi-chunk decompression ceilings
+- Corrupted payload chunks and invalid integrity hashes
+
+**Goal**: Ensure stream reconstruction never panics, handles malformed streams gracefully with `Result::Err`, and protects against unbounded memory amplification.
+
 ## Prerequisites
 
 Install `cargo-fuzz`:

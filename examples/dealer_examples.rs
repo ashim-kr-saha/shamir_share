@@ -3,7 +3,7 @@ use shamir_share::ShamirShare;
 fn main() {
     println!("=== Shamir Share Dealer Demo ===\n");
 
-    let mut shamir = ShamirShare::builder(10, 5).build().unwrap();
+    let shamir = ShamirShare::builder(10, 5).build().unwrap();
     let secret = b"This is a secret message that demonstrates the new dealer API!";
 
     println!("Secret: {:?}", std::str::from_utf8(secret).unwrap());

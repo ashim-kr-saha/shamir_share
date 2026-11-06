@@ -8,7 +8,7 @@ fn test_streaming_end_to_end() {
     let threshold = 3;
 
     // Create a ShamirShare instance
-    let mut scheme = ShamirShare::builder(total_shares, threshold)
+    let scheme = ShamirShare::builder(total_shares, threshold)
         .build()
         .unwrap();
 

@@ -45,9 +45,9 @@ audit:
 security-scan:
     @echo "Checking for potential side-channel vulnerabilities..."
     @echo "Looking for lookup tables indexed by secret data..."
-    @grep -r --include="*.rs" "\\[.*\\.0.*\\]\\[.*\\.0.*\\]" src || echo "No suspicious table lookups found."
+    @if grep -rn --include="*.rs" "\\[.*\\.0.*\\]\\[.*\\.0.*\\]" src; then echo "Suspicious table lookup found!"; exit 1; else echo "No suspicious table lookups found."; fi
     @echo "Looking for non-constant-time comparisons of secret data..."
-    @grep -r --include="*.rs" "if.*==.*secret" src || echo "No suspicious comparisons found."
+    @if grep -rn --include="*.rs" "if.*==.*secret" src; then echo "Suspicious comparison found!"; exit 1; else echo "No suspicious comparisons found."; fi
 
 # Clean build artifacts
 clean:

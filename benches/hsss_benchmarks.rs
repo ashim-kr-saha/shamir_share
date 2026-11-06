@@ -229,7 +229,7 @@ fn bench_hsss_vs_shamir_comparison(c: &mut Criterion) {
             use shamir_share::ShamirShare;
 
             // Create regular Shamir scheme (5 shares, threshold 3)
-            let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+            let scheme = ShamirShare::builder(5, 3).build().unwrap();
 
             // Split using regular Shamir
             let shares = scheme.split(black_box(&data)).unwrap();

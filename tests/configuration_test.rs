@@ -9,7 +9,7 @@ fn test_builder_defaults() {
     // We need to access the config through the split method behavior since config is private
     // We'll verify this by checking the integrity_check field in generated shares
     let secret = b"test secret";
-    let mut shamir_mut = shamir;
+    let shamir_mut = shamir;
     let shares = shamir_mut.split(secret).unwrap();
 
     // Default configuration should have integrity_check = true
@@ -29,7 +29,7 @@ fn test_builder_with_custom_config() {
 
     // Assert that its internal configuration for integrity_check is false
     let secret = b"test secret";
-    let mut shamir_mut = shamir;
+    let shamir_mut = shamir;
     let shares = shamir_mut.split(secret).unwrap();
 
     // Custom configuration should have integrity_check = false
@@ -42,7 +42,7 @@ fn test_split_with_integrity_check_disabled() {
     let config = Config::new().with_integrity_check(false);
 
     // Build a ShamirShare instance with this config
-    let mut shamir = ShamirShare::builder(5, 3)
+    let shamir = ShamirShare::builder(5, 3)
         .with_config(config)
         .build()
         .unwrap();
@@ -66,7 +66,7 @@ fn test_split_with_integrity_check_disabled() {
 #[test]
 fn test_split_with_integrity_check_enabled() {
     // Build a ShamirShare instance using the default configuration (integrity_check: true)
-    let mut shamir = ShamirShare::builder(5, 3).build().unwrap();
+    let shamir = ShamirShare::builder(5, 3).build().unwrap();
 
     // Define a secret
     let secret = b"hash me please";

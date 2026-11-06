@@ -23,6 +23,8 @@ pub struct Config {
     compression: bool,
     /// Whether to perform integrity checks
     integrity_check: bool,
+    /// Maximum cumulative decompressed bytes allowed for a stream
+    max_decompressed_stream_size: Option<u64>,
 }
 
 impl Default for Config {
@@ -32,12 +34,16 @@ impl Default for Config {
             mode: SplitMode::default(),
             compression: false,
             integrity_check: true,
+            max_decompressed_stream_size: None,
         }
     }
 }
 
 /// Maximum allowed chunk size for streaming and configuration (64 MiB)
 pub const MAX_CONFIG_CHUNK_SIZE: usize = 64 * 1024 * 1024;
+
+/// Default maximum cumulative decompressed bytes allowed during streaming reconstruction (1 GiB)
+pub const MAX_DEFAULT_STREAM_DECOMPRESSED_SIZE: u64 = 1024 * 1024 * 1024;
 
 impl Config {
     /// Creates a new configuration with default values
@@ -67,6 +73,12 @@ impl Config {
     #[inline]
     pub fn integrity_check(&self) -> bool {
         self.integrity_check
+    }
+
+    /// Returns the maximum allowed cumulative decompressed bytes for streams, if configured
+    #[inline]
+    pub fn max_decompressed_stream_size(&self) -> Option<u64> {
+        self.max_decompressed_stream_size
     }
 
     /// Sets the chunk size
@@ -101,6 +113,12 @@ impl Config {
     /// Enables or disables integrity checking
     pub fn with_integrity_check(mut self, enabled: bool) -> Self {
         self.integrity_check = enabled;
+        self
+    }
+
+    /// Sets the maximum allowed cumulative decompressed bytes for streaming reconstruction
+    pub fn with_max_decompressed_stream_size(mut self, max_size: u64) -> Self {
+        self.max_decompressed_stream_size = Some(max_size);
         self
     }
 

@@ -115,7 +115,7 @@ fn test_shamir_performance(name: &str, data: &[u8], iterations: u32) {
 
     for _ in 0..iterations {
         // Test split performance
-        let mut shamir = ShamirShare::builder(15, 10).build().unwrap(); // Similar total shares as HSSS
+        let shamir = ShamirShare::builder(15, 10).build().unwrap(); // Similar total shares as HSSS
         let start = Instant::now();
         let shares = shamir.split(data).unwrap();
         total_split_time += start.elapsed().as_nanos();
