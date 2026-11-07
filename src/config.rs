@@ -1,5 +1,7 @@
 use crate::Zeroizing;
 use crate::error::{Result, ShamirError};
+use alloc::format;
+use core::fmt;
 
 /// Processing mode for share operations
 #[non_exhaustive]
@@ -14,7 +16,7 @@ pub enum SplitMode {
 
 /// Configuration options for splitting and reconstruction
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     /// Size of chunks to process at once
     chunk_size: usize,
@@ -28,6 +30,25 @@ pub struct Config {
     max_decompressed_stream_size: Option<u64>,
     /// Optional 256-bit authentication key for HMAC-based share authentication
     authentication_key: Option<Zeroizing<[u8; 32]>>,
+}
+
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("chunk_size", &self.chunk_size)
+            .field("mode", &self.mode)
+            .field("compression", &self.compression)
+            .field("integrity_check", &self.integrity_check)
+            .field(
+                "max_decompressed_stream_size",
+                &self.max_decompressed_stream_size,
+            )
+            .field(
+                "authentication_key",
+                &self.authentication_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 impl Default for Config {

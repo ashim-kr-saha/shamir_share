@@ -1,3 +1,5 @@
+#![cfg(feature = "std")]
+
 use shamir_share::{Config, ShamirShare};
 
 #[test]

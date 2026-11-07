@@ -1,4 +1,8 @@
+#[cfg(feature = "std")]
 use std::io;
+
+use alloc::string::String;
+
 use thiserror::Error;
 
 /// Error type for Shamir's Secret Sharing operations
@@ -30,6 +34,7 @@ pub enum ShamirError {
     ShareNotFound(u8),
 
     /// General I/O error
+    #[cfg(feature = "std")]
     #[error("I/O error: {0}")]
     IoError(#[from] io::Error),
 
@@ -66,4 +71,4 @@ pub enum ShamirError {
     RngError(String),
 }
 
-pub type Result<T> = std::result::Result<T, ShamirError>;
+pub type Result<T> = core::result::Result<T, ShamirError>;

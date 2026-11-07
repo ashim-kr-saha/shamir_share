@@ -1,3 +1,5 @@
+#![cfg(all(feature = "hsss", feature = "std"))]
+
 use shamir_share::hsss::Hsss;
 use shamir_share::{ShamirError, ShamirShare};
 

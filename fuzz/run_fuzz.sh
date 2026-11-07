@@ -5,8 +5,9 @@
 # 
 # Targets:
 #   reconstruct - Fuzz the ShamirShare::reconstruct method
-#   storage     - Fuzz the FileShareStore::load_share method
-#   all         - Run both targets sequentially
+#   stream      - Fuzz the ShamirShare::reconstruct_stream method
+#   wire        - Fuzz the Share::from_bytes canonical deserialization
+#   all         - Run all targets sequentially
 #
 # Duration: Time to run each target (default: 60s)
 
@@ -57,17 +58,17 @@ case $TARGET in
     stream)
         run_target "fuzz_reconstruct_stream" "$DURATION"
         ;;
-    storage)
-        run_target "fuzz_share_storage" "$DURATION"
+    wire)
+        run_target "fuzz_share_from_bytes" "$DURATION"
         ;;
     all)
         run_target "fuzz_reconstruct" "$DURATION"
         run_target "fuzz_reconstruct_stream" "$DURATION"
-        run_target "fuzz_share_storage" "$DURATION"
+        run_target "fuzz_share_from_bytes" "$DURATION"
         ;;
     *)
         echo "Unknown target: $TARGET"
-        echo "Available targets: reconstruct, stream, storage, all"
+        echo "Available targets: reconstruct, stream, wire, all"
         exit 1
         ;;
 esac
@@ -76,8 +77,8 @@ echo "=== Fuzzing completed ==="
 echo
 echo "To view any crashes found:"
 echo "  cargo fuzz fmt fuzz_reconstruct"
-echo "  cargo fuzz fmt fuzz_share_storage"
+echo "  cargo fuzz fmt fuzz_share_from_bytes"
 echo
 echo "To reproduce a specific crash:"
 echo "  cargo fuzz run fuzz_reconstruct fuzz/artifacts/fuzz_reconstruct/crash-<hash>"
-echo "  cargo fuzz run fuzz_share_storage fuzz/artifacts/fuzz_share_storage/crash-<hash>"
+echo "  cargo fuzz run fuzz_share_from_bytes fuzz/artifacts/fuzz_share_from_bytes/crash-<hash>"

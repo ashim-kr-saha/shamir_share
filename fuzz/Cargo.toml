@@ -19,8 +19,8 @@ test = false
 doc = false
 
 [[bin]]
-name = "fuzz_share_storage"
-path = "fuzz_targets/fuzz_share_storage.rs"
+name = "fuzz_share_from_bytes"
+path = "fuzz_targets/fuzz_share_from_bytes.rs"
 test = false
 doc = false
 

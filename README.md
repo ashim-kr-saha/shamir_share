@@ -1,37 +1,26 @@
-# shamir_share
-
-A secure and efficient Rust library for Shamir's Secret Sharing, built with a security-first, constant-time design to prevent side-channel attacks. Split sensitive data into multiple shares where only a threshold number is needed for reconstruction.
+# Shamir's Secret Sharing (shamir_share)
 
 [![Crates.io](https://img.shields.io/crates/v/shamir_share.svg)](https://crates.io/crates/shamir_share)
 [![Documentation](https://docs.rs/shamir_share/badge.svg)](https://docs.rs/shamir_share)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Overview
+A security-first, high-performance implementation of Shamir's Secret Sharing scheme over GF(2^8) with constant-time operations, modular Cargo features, and `#![no_std]` support.
 
-`shamir_share` provides a robust implementation of Shamir's Secret Sharing scheme as a Rust library. It allows you to split sensitive data (such as database files) into multiple shares, where the original data can only be reconstructed when a predetermined number of shares are combined.
+## Key Features
 
-### Key Features
-
-- **Flexible Share Generation:**
-  - Split data into customizable number of shares (n)
-  - Define threshold (k) for minimum shares needed for reconstruction
-  - Lazy iterator-based share generation with `Dealer` for memory efficiency
-  - Support for up to 255 shares (GF(256) field limitation)
-- **Strong Security Features:**
-  - Secure random number generation using `ChaCha20Rng` seeded from system entropy (`SysRng`)
-  - Branch-free constant-time cryptographic operations to prevent side-channel attacks
-  - SHA-256 integrity verification with constant-time equality comparisons (`subtle::ConstantTimeEq`)
-  - Atomic share persistence with temporary files and restricted `0o600` permissions on Unix
-  - Memory zeroization on drop (via `zeroize` feature)
-  - Zero unsafe code (`#![forbid(unsafe_code)]`)
-  - Magic number, format versioning, and length caps on untrusted inputs
-  - Comprehensive fuzzing suite for storage, stream, and memory reconstruction
-- **Performance & Usability:**
-  - Zero-copy operations for efficient memory usage
-  - Streaming support for large files
-  - Builder pattern for ergonomic configuration
-  - Cross-platform compatibility
-  - Comprehensive error handling
+- **Constant-Time GF(2^8) Arithmetic**: Branchless Russian Peasant Multiplication and fixed-chain Fermat inversion resist cache-timing and execution-timing side-channels.
+- **Embedded & Enclave Ready (`#![no_std]`)**: Core arithmetic, share splitting (`split_with_rng`), and reconstruction operate cleanly with only `alloc`, verifiable on WebAssembly (`wasm32-unknown-unknown`) and embedded targets.
+- **Canonical Binary Wire Format**: Self-contained zero-dependency wire serialization via `Share::to_bytes()` and `Share::from_bytes(&[u8])` with format version 3 (`b"SHS1"`) framing.
+- **Modular Feature Architecture**: Opt-in capabilities keep your binary lean and dependencies minimal:
+  - `streaming`: Large file chunked streaming I/O.
+  - `hsss`: Hierarchical secret sharing with role-based access levels.
+  - `refresh`: Proactive secret sharing with zero-polynomial share refreshing.
+  - `parallel`: Multi-threaded parallel polynomial evaluation via Rayon.
+  - `compress`: Transparent Zstandard chunk compression.
+  - `serde`: Optional `serde::Serialize` and `serde::Deserialize` implementations.
+  - `zeroize`: Secure memory hygiene clearing sensitive buffers on drop.
+- **Authenticated Shares**: Optional caller-held 256-bit authentication key verifies shares with HMAC-SHA256, protecting against active share tampering and splicing.
+- **100% Safe Rust**: `#![forbid(unsafe_code)]` enforced across the entire library.
 
 ## Installation
 
@@ -39,44 +28,47 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-shamir_share = "0.3.0"
+shamir_share = "0.4.0"
+```
+
+For `#![no_std]` environments (hardware wallets, secure enclaves, embedded systems):
+
+```toml
+[dependencies]
+shamir_share = { version = "0.4.0", default-features = false, features = ["alloc"] }
 ```
 
 ## Quick Start
 
 ### Basic Usage
 ```rust
-use shamir_share::{ShamirShare, FileShareStore, ShareStore};
+use shamir_share::{ShamirShare, Share};
 
 // Create a scheme with 5 shares and threshold 3
-let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+let scheme = ShamirShare::builder(5, 3).build().unwrap();
 
 // Split a secret
 let secret = b"my secret data";
 let shares = scheme.split(secret).unwrap();
 
-// Store shares
-let temp_dir = tempfile::tempdir().unwrap();
-let mut store = FileShareStore::new(temp_dir.path()).unwrap();
-for share in &shares {
-    store.store_share(share).unwrap();
-}
+// Serialize shares to canonical bytes (e.g. for transmission or storage)
+let serialized_shares: Vec<Vec<u8>> = shares.iter().map(|s| s.to_bytes()).collect();
 
-// Reconstruct from 3 shares
-let loaded_shares = vec![
-    store.load_share(1).unwrap(),
-    store.load_share(2).unwrap(),
-    store.load_share(3).unwrap(),
-];
+// Later, deserialize and reconstruct from any 3 shares
+let loaded_shares: Vec<Share> = serialized_shares[0..3]
+    .iter()
+    .map(|b| Share::from_bytes(b).unwrap())
+    .collect();
+
 let reconstructed = ShamirShare::reconstruct(&loaded_shares).unwrap();
-assert_eq!(reconstructed, secret);
+assert_eq!(reconstructed.as_slice(), secret);
 ```
 
 ### Lazy Share Generation with Dealer
 ```rust
 use shamir_share::ShamirShare;
 
-let mut scheme = ShamirShare::builder(10, 5).build().unwrap();
+let scheme = ShamirShare::builder(10, 5).build().unwrap();
 let secret = b"my secret data";
 
 // Generate only the shares you need
@@ -90,154 +82,64 @@ let even_shares: Vec<_> = scheme.try_dealer(secret)
     .collect();
 
 let reconstructed = ShamirShare::reconstruct(&shares).unwrap();
-assert_eq!(reconstructed, secret);
+assert_eq!(reconstructed.as_slice(), secret);
 ```
 
-## Usage Examples
-
-### Basic Usage
-
+### `#![no_std]` Usage
 ```rust
-use shamir_share::{ShamirShare, FileShareStore, ShareStore};
-use std::path::Path;
+use shamir_share::{ShamirShare, Share};
+use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::SeedableRng;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create a new ShamirShare instance with 5 shares, threshold of 3
-    let mut shamir = ShamirShare::builder(5, 3).build()?;
+// In no_std mode, supply any RngCore implementation
+let mut rng = ChaCha20Rng::from_seed([0x42; 32]);
+let scheme = ShamirShare::builder(5, 3).build().unwrap();
+let secret = b"embedded enclave secret";
 
-    // Split a secret
-    let secret = b"This is a secret message";
-    let shares = shamir.split(secret)?;
-
-    // Store shares in a directory
-    let temp_dir = tempfile::tempdir()?;
-    let mut store = FileShareStore::new(temp_dir.path())?;
-    for share in &shares {
-        store.store_share(share)?;
-    }
-
-    // Later, reconstruct the secret using at least 3 shares
-    let mut reconstruction_shares = Vec::new();
-    for i in 1..=3 {
-        reconstruction_shares.push(store.load_share(i)?);
-    }
-
-    let reconstructed = ShamirShare::reconstruct(&reconstruction_shares)?;
-    assert_eq!(&reconstructed, secret);
-    Ok(())
-}
+let shares = scheme.split_with_rng(secret, &mut rng).unwrap();
+let reconstructed = ShamirShare::reconstruct(&shares[0..3]).unwrap();
+assert_eq!(reconstructed.as_slice(), secret);
 ```
 
-## Security
+## Feature Matrix
 
-This library is designed with security as the primary concern, implementing multiple layers of protection against various attack vectors:
+| Feature | Default | Description |
+|---|:---:|---|
+| `std` | Yes | Standard library integration, OS system entropy (`SysRng`), and I/O error bridging. |
+| `zeroize` | Yes | Hardware-grade memory zeroization on drop for buffers, RNG states, and HMAC keys. |
+| `streaming` | Yes | Chunked streaming I/O (`split_stream` and `reconstruct_stream`). |
+| `hsss` | Yes | Hierarchical secret sharing scheme (role-based access structures). |
+| `refresh` | Yes | Proactive secret sharing (epoch refreshing via zero polynomials). |
+| `parallel` | No | Multi-threaded CPU evaluation using Rayon parallel iterators. |
+| `compress` | No | Zstandard compression before splitting. |
+| `serde` | No | Serde `Serialize` and `Deserialize` support for `Share`. |
 
-### Cryptographic Security Guarantees
+## Security Guarantees & Threat Model
 
-- **Constant-Time GF(2^8) Arithmetic**: All finite field operations use constant-time algorithms with no lookup tables, preventing cache-timing side-channel attacks
-- **Resistant to Side-Channel Attacks**: Branch-free Russian Peasant Multiplication and Fermat's Little Theorem for inversion ensure consistent execution time regardless of input values
-- **Cryptographically Secure Random Number Generation**: Uses `ChaCha20Rng` reseeded from system entropy (`SysRng`) on each split/refresh operation
-- **Corruption Detection**: SHA-256 hash verification with constant-time comparison (`subtle::ConstantTimeEq`) detects bit-rot, corruption, and stream framing desynchronization
-- **Information-Theoretic Secrecy**: Individual shares reveal no information about the secret without meeting the threshold
-
-### Implementation Security Features
-
-- **Memory Safety**: Written in safe Rust with `#![forbid(unsafe_code)]`
-- **Memory Hygiene**: Secret buffers and polynomial coefficients are securely zeroized on drop
-- **Constant-Time Comparison**: Prevents timing attacks during digest verification
-- **Atomic Storage**: Atomic temporary-file-and-rename with random nonce prevents partial writes on crash or power failure, with `0o600` permissions on Unix
-- **Secure Share Format**: Magic numbers, explicit versioning, and bounded allocation caps prevent format confusion and OOM DoS attacks
-- **Safe Concurrency**: Uses Rayon for safe parallel computation without compromising security
-
-### Security Considerations for Users
-
-- **Corruption Detection vs. Authenticity**: The built-in SHA-256 verification detects accidental bit-rot, corruption, and stream framing desynchronization. Because Shamir's Secret Sharing is linear over $GF(2^8)$, an unkeyed hash inside the shared payload does *not* protect against active tampering even by a single malicious share holder (or a network adversary modifying one share) if the underlying plaintext is known or predictable. For authenticity against active attackers, shares should be authenticated using digital signatures or authenticated encryption (AEAD).
-- **Compression Side-Channel Warning**: Optional `zstd` compression is not constant-time and produces variable-length shares that leak plaintext entropy and size. Do not enable compression when protecting small, fixed-entropy secrets like cryptographic keys.
-- **Share Distribution**: Distribute and store shares in physically and administratively separate locations
-- **Access Control**: Implement proper access controls for share storage locations
-- **Network Security**: Use secure, encrypted channels (e.g. TLS, SSH) when transmitting shares over networks
-
-### Security-Performance Tradeoff
-
-This library prioritizes security over raw performance. The constant-time implementations of cryptographic operations protect against side-channel attacks but are slower than lookup table-based approaches. For typical use cases (secrets under a few MB), the performance impact is minimal:
-
-| Operation | 1KB Secret | 10KB Secret | 100KB Secret |
-|-----------|------------|-------------|--------------|
-| Split     | ~160 us    | ~550 us     | ~3.4 ms      |
-| Reconstruct| ~80 us     | ~170 us     | ~680 us      |
-| Total     | ~240 us    | ~720 us     | ~4.1 ms      |
-
-## API Documentation
-
-For detailed API documentation, please visit [docs.rs/shamir_share](https://docs.rs/shamir_share).
-
-### Core Types
-
-- `ShamirShare`: Main implementation of Shamir's Secret Sharing scheme
-- `ShamirShareBuilder`: Builder pattern for configuring `ShamirShare` instances
-- `Dealer`: Lazy iterator for generating shares on-demand
-- `Share`: Represents a single share of the secret
-- `FileShareStore`: File-based storage for shares
-- `ShareStore`: Trait for implementing custom storage backends
-- `Config`: Configuration options for the sharing process
-- `SplitMode`: Enum for specifying how data is split (Sequential or Parallel)
+- **Information-Theoretic Security**: Any set of fewer than $k$ shares reveals mathematically zero information about the secret.
+- **Constant-Time Execution**: Arithmetic routines are verified branchless to protect against cache and timing attacks.
+- **Corruption Detection vs. Authenticity**: Unkeyed SHA-256 verification detects accidental bit-rot and framing errors. To protect against malicious share holders actively forging shares with known plaintext, configure a 256-bit authentication key with `Config::with_authentication_key`.
+- **Side-Channel Caution with Compression**: When `compress` is enabled, ciphertext length varies with plaintext entropy (CRIME/BREACH style leaks). Do not enable compression for fixed-entropy secrets like cryptographic keys.
 
 ## Development & Testing
 
-### Running Tests
 ```bash
-# Run all tests
-cargo test
-
-# Run tests with coverage
+# Run all tests with all features
 cargo test --all-features
 
-# Run benchmarks
-cargo bench
-```
+# Run core tests in bare no_std mode
+cargo check --target wasm32-unknown-unknown --no-default-features
 
-### Fuzzing for Security
-This library includes comprehensive fuzzing targets to ensure robustness against malformed inputs:
+# Run clippy
+cargo clippy --all-targets --all-features -- -D warnings
 
-```bash
-# Install nightly Rust and cargo-fuzz
-rustup install nightly
-cargo +nightly install cargo-fuzz
-
-# Run fuzzing targets
+# Run fuzzing
 cd fuzz
-cargo +nightly fuzz run fuzz_reconstruct    # Test reconstruction logic
-cargo +nightly fuzz run fuzz_share_storage  # Test share parsing logic
-
-# Or use the convenience script
-./run_fuzz.sh all 300  # Run all targets for 5 minutes each
+cargo +nightly fuzz run fuzz_reconstruct
+cargo +nightly fuzz run fuzz_share_from_bytes
+cargo +nightly fuzz run fuzz_reconstruct_stream
 ```
-
-The fuzzing targets test:
-- **Reconstruction robustness**: Invalid shares, corrupted data, edge cases
-- **Storage parsing**: Malformed files, truncated data, invalid headers
-- **Memory safety**: Buffer overruns, integer overflows, panic conditions
-
-### Performance Testing
-```bash
-# Run streaming benchmarks
-./run_streaming_benchmarks.sh
-
-# Compare with baseline
-cargo run --release --example performance_compare
-```
-
-## Contributing
-
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to contribute to this project.
-
-### Security Considerations for Contributors
-
-- All cryptographic operations must be constant-time
-- New features should include comprehensive fuzzing targets
-- Performance changes should be benchmarked
-- Security-sensitive code requires additional review
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

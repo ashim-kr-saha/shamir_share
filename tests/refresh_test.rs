@@ -1,3 +1,5 @@
+#![cfg(all(feature = "refresh", feature = "std"))]
+
 use shamir_share::{Config, ShamirError, ShamirShare};
 
 #[test]

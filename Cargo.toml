@@ -1,6 +1,6 @@
 [package]
 name = "shamir_share"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.85"
 authors = ["Ashim Kumar Saha"]
@@ -19,41 +19,86 @@ exclude = [
     "run_streaming_benchmarks.sh",
 ]
 
+[features]
+default = ["std", "zeroize", "streaming", "hsss", "refresh"]
+
+# Environment
+std = ["subtle/std", "thiserror/std", "zeroize?/std", "rand/std", "rand/sys_rng", "rand/thread_rng", "dep:rand"]
+zeroize = ["dep:zeroize"]
+
+# Modular Features
+streaming = ["std"]
+hsss = []
+refresh = []
+parallel = ["std", "dep:rayon"]
+compress = ["std", "dep:zstd"]
+serde = ["dep:serde", "serde/derive", "serde/alloc"]
 
 [dependencies]
-rand = "0.10.3"
-rand_chacha = "0.10.0"
-thiserror = "2.0.21"
-rayon = "1.12.0"
-sha2 = "0.11.1"
-subtle = "2.6"
+subtle = { version = "2.6", default-features = false }
+sha2 = { version = "0.11", default-features = false }
+thiserror = { version = "2.0.21", default-features = false }
+rand_chacha = { version = "0.10.0", default-features = false }
+rand = { version = "0.10.3", default-features = false, optional = true }
+rayon = { version = "1.12.0", optional = true }
 zstd = { version = "0.14.3", optional = true }
-zeroize = { version = "1.9.1", features = ["zeroize_derive"], optional = true }
-
-[features]
-default = ["zeroize"]
-compress = ["zstd"]
+zeroize = { version = "1.9.1", default-features = false, features = ["alloc", "zeroize_derive"], optional = true }
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"], optional = true }
 
 [dev-dependencies]
 criterion = "0.8.2"
 tempfile = "3.27.0"
+serde_json = "1.0"
 
 [[bench]]
 name = "in_memory_benchmarks"
 harness = false
+required-features = ["std"]
 
 [[bench]]
 name = "streaming_benchmarks"
 harness = false
+required-features = ["streaming"]
 
 [[bench]]
 name = "hsss_benchmarks"
 harness = false
+required-features = ["hsss"]
 
 [[bench]]
 name = "benchmark"
 harness = false
+required-features = ["std"]
 
 [[bench]]
 name = "refresh_benchmarks"
 harness = false
+required-features = ["refresh"]
+
+[[example]]
+name = "benchmark_optimized"
+required-features = ["std", "hsss"]
+
+[[example]]
+name = "dealer_examples"
+required-features = ["std"]
+
+[[example]]
+name = "hsss_example"
+required-features = ["std", "hsss"]
+
+[[example]]
+name = "hsss_performance_analysis"
+required-features = ["std", "hsss"]
+
+[[example]]
+name = "performance_compare"
+required-features = ["std"]
+
+[[example]]
+name = "performance_test"
+required-features = ["std"]
+
+[[example]]
+name = "performance_test_hsss"
+required-features = ["std", "hsss"]

@@ -1,10 +1,16 @@
+#![cfg(all(
+    feature = "std",
+    feature = "hsss",
+    feature = "refresh",
+    feature = "streaming"
+))]
+
 use shamir_share::{
-    Config, FileShareStore, FiniteField, HierarchicalShare, Hsss, MAX_CONFIG_CHUNK_SIZE,
-    ShamirError, ShamirShare, Share, ShareStore,
+    Config, FiniteField, HierarchicalShare, Hsss, MAX_CONFIG_CHUNK_SIZE, ShamirError, ShamirShare,
+    Share,
 };
 use std::io::Cursor;
 use subtle::ConstantTimeEq;
-use tempfile::tempdir;
 
 #[test]
 fn test_f01_hsss_rejects_forged_metadata() {
@@ -199,28 +205,14 @@ fn test_f08_constant_time_traits() {
 }
 
 #[test]
-fn test_f11_storage_trailing_bytes_and_permissions() {
-    let temp = tempdir().unwrap();
-    let share_dir = temp.path().join("secure_shares");
-    let mut store = FileShareStore::new(&share_dir).unwrap();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let metadata = std::fs::metadata(&share_dir).unwrap();
-        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
-    }
-
+fn test_f11_wire_format_trailing_bytes_rejected() {
     let share = Share::new(1, vec![10, 20, 30], 3, 5, false, false);
-    store.store_share(&share).unwrap();
+    let mut bytes = share.to_bytes();
+    assert_eq!(Share::from_bytes(&bytes).unwrap(), share);
 
-    // Append malicious trailing byte to share file
-    let share_path = share_dir.join("share_001");
-    let mut bytes = std::fs::read(&share_path).unwrap();
+    // Append malicious trailing byte to share bytes
     bytes.push(0xFF);
-    std::fs::write(&share_path, bytes).unwrap();
-
-    let load_res = store.load_share(1);
+    let load_res = Share::from_bytes(&bytes);
     assert!(matches!(load_res, Err(ShamirError::InvalidShareFormat)));
 }
 

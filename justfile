@@ -72,9 +72,9 @@ fuzz:
 fuzz-stream:
     cargo fuzz run fuzz_reconstruct_stream -- -max_total_time=3600
 
-# Run storage fuzzing
-fuzz-storage:
-    cargo fuzz run fuzz_share_storage -- -max_total_time=3600
+# Run canonical wire format deserialization fuzzing
+fuzz-wire:
+    cargo fuzz run fuzz_share_from_bytes -- -max_total_time=3600
 
 # Install development dependencies
 setup-dev:

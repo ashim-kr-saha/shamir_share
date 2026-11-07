@@ -18,16 +18,16 @@ Tests the `ShamirShare::reconstruct` method with arbitrary share data:
 
 **Goal**: Ensure `reconstruct` never panics and always returns a proper `Result`.
 
-### `fuzz_share_storage`
-Tests the `FileShareStore::load_share` method with arbitrary file content:
+### `fuzz_share_from_bytes`
+Tests the `Share::from_bytes` canonical binary deserialization with arbitrary byte content:
 - Invalid magic numbers and version numbers
-- Truncated files and partial headers
-- Invalid metadata fields
+- Truncated bytes and partial headers
+- Invalid metadata fields (index 0, threshold > total_shares)
 - Corrupted data length fields
-- Files with extra trailing data
-- Mismatched indices
+- Byte arrays with extra trailing data
+- Empty byte slices
 
-**Goal**: Ensure share parsing never panics and handles malformed files gracefully.
+**Goal**: Ensure canonical wire parsing never panics, handles malformed bytes gracefully, and enforces roundtrip idempotence.
 
 ### `fuzz_reconstruct_stream`
 Tests the `ShamirShare::reconstruct_stream` and `reconstruct_stream_with_scheme` methods with arbitrary streaming chunks:
@@ -56,8 +56,8 @@ cargo install cargo-fuzz
 # Run specific target for 300 seconds
 ./run_fuzz.sh reconstruct 300
 
-# Run storage fuzzing for 120 seconds
-./run_fuzz.sh storage 120
+# Run wire format fuzzing for 120 seconds
+./run_fuzz.sh wire 120
 ```
 
 ### Manual Execution
@@ -65,8 +65,8 @@ cargo install cargo-fuzz
 # Run reconstruct fuzzing
 cargo fuzz run fuzz_reconstruct
 
-# Run storage fuzzing
-cargo fuzz run fuzz_share_storage
+# Run wire format fuzzing
+cargo fuzz run fuzz_share_from_bytes
 
 # Run with specific options
 cargo fuzz run fuzz_reconstruct -- -max_total_time=300 -max_len=1000
@@ -102,7 +102,7 @@ For CI/CD pipelines, you can run fuzzing for a limited time:
 ```bash
 # Run each target for 30 seconds in CI
 timeout 30 cargo fuzz run fuzz_reconstruct || true
-timeout 30 cargo fuzz run fuzz_share_storage || true
+timeout 30 cargo fuzz run fuzz_share_from_bytes || true
 ```
 
 ## Expected Behavior

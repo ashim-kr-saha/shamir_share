@@ -1,3 +1,5 @@
+#![cfg(feature = "streaming")]
+
 use shamir_share::ShamirShare;
 use std::io::Cursor;
 

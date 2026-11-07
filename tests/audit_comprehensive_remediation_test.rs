@@ -1,9 +1,12 @@
-use shamir_share::{
-    FileShareStore, FiniteField, HierarchicalShare, Hsss, ShamirError, ShamirShare, Share,
-    ShareStore,
-};
+#![cfg(all(
+    feature = "std",
+    feature = "hsss",
+    feature = "refresh",
+    feature = "streaming"
+))]
+
+use shamir_share::{FiniteField, HierarchicalShare, Hsss, ShamirError, ShamirShare, Share};
 use std::io::Cursor;
-use tempfile::tempdir;
 
 #[test]
 fn test_f01_header_metadata_tampering_rejected() {
@@ -155,44 +158,27 @@ fn test_f08_delta_index_checked() {
 }
 
 #[test]
-fn test_f10_storage_existing_dir_permissions_and_symlinks() {
-    let temp = tempdir().unwrap();
-    let share_dir = temp.path().join("secure_shares");
-    std::fs::create_dir_all(&share_dir).unwrap();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // Set loose permissions on existing directory
-        let mut perms = std::fs::metadata(&share_dir).unwrap().permissions();
-        perms.set_mode(0o777);
-        std::fs::set_permissions(&share_dir, perms).unwrap();
-    }
-
-    // Creating FileShareStore on existing directory must restrict permissions to 0o700
-    let mut store = FileShareStore::new(&share_dir).unwrap();
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::metadata(&share_dir).unwrap().permissions();
-        assert_eq!(perms.mode() & 0o077, 0);
-    }
-
-    // Symlink attack rejection
+fn test_f10_share_wire_format_serialization_and_validation() {
     let share = Share::new(1, vec![10, 20, 30], 2, 3, false, false);
-    store.store_share(&share).unwrap();
+    let bytes = share.to_bytes();
+    let loaded = Share::from_bytes(&bytes).unwrap();
+    assert_eq!(loaded, share);
 
-    #[cfg(unix)]
-    {
-        let share_file = share_dir.join("share_001");
-        let symlink_path = share_dir.join("share_002");
-        std::os::unix::fs::symlink(&share_file, &symlink_path).unwrap();
+    // Tampered magic bytes rejected
+    let mut tampered = bytes.clone();
+    tampered[0] = b'X';
+    assert!(matches!(
+        Share::from_bytes(&tampered),
+        Err(ShamirError::InvalidShareFormat)
+    ));
 
-        // Loading via symlink must be rejected
-        let res = store.load_share(2);
-        assert!(matches!(res, Err(ShamirError::InvalidShareFormat)));
-    }
+    // Tampered version rejected
+    let mut tampered_ver = bytes.clone();
+    tampered_ver[4] = 99;
+    assert!(matches!(
+        Share::from_bytes(&tampered_ver),
+        Err(ShamirError::InvalidShareFormat)
+    ));
 }
 
 #[test]
@@ -374,28 +360,24 @@ fn test_mas09_compression_without_integrity_rejected() {
 }
 
 #[test]
-fn test_mas10_file_share_store_symlink_base_dir_and_secure_delete() {
-    let temp = tempdir().unwrap();
-    let real_dir = temp.path().join("real_dir");
-    std::fs::create_dir_all(&real_dir).unwrap();
-
-    #[cfg(unix)]
-    {
-        let symlink_dir = temp.path().join("symlink_dir");
-        std::os::unix::fs::symlink(&real_dir, &symlink_dir).unwrap();
-
-        // Initializing FileShareStore with a symlinked base_dir MUST be rejected
-        let res = FileShareStore::new(&symlink_dir);
-        assert!(matches!(res, Err(ShamirError::InvalidShareFormat)));
-    }
-
-    // Secure file overwrite on delete_share
-    let mut store = FileShareStore::new(&real_dir).unwrap();
+fn test_mas10_wire_format_length_and_index_bounds() {
     let share = Share::new(1, vec![0xAA; 100], 2, 3, true, false);
-    store.store_share(&share).unwrap();
-    assert!(store.load_share(1).is_ok());
+    let bytes = share.to_bytes();
+    assert_eq!(Share::from_bytes(&bytes).unwrap(), share);
 
-    // delete_share cleans up the file
-    store.delete_share(1).unwrap();
-    assert!(store.load_share(1).is_err());
+    // Index 0 in wire bytes rejected
+    let mut bad_index = bytes.clone();
+    bad_index[6] = 0;
+    assert!(matches!(
+        Share::from_bytes(&bad_index),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Index > total_shares in wire bytes rejected
+    let mut excess_index = bytes.clone();
+    excess_index[6] = 4;
+    assert!(matches!(
+        Share::from_bytes(&excess_index),
+        Err(ShamirError::InvalidShareFormat)
+    ));
 }

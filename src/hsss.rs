@@ -29,6 +29,12 @@
 //!     .unwrap();
 //! ```
 
+use alloc::collections::BTreeSet;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
+
 use crate::Zeroizing;
 use crate::config::Config;
 use crate::error::{Result, ShamirError};
@@ -135,8 +141,8 @@ impl PartialEq for HierarchicalShare {
 
 impl Eq for HierarchicalShare {}
 
-impl std::fmt::Debug for HierarchicalShare {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for HierarchicalShare {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HierarchicalShare")
             .field("level_name", &self.level_name)
             .field("shares_count", &self.shares.len())
@@ -309,7 +315,7 @@ impl HsssBuilder {
         }
 
         // Validate that all levels have non-zero share counts and unique names
-        let mut seen_names = std::collections::HashSet::new();
+        let mut seen_names = BTreeSet::new();
         for level in &self.levels {
             if level.shares_count == 0 {
                 return Err(ShamirError::InvalidShareCount(level.shares_count));
@@ -478,67 +484,8 @@ impl Hsss {
         self.master_scheme.total_shares()
     }
 
-    /// Splits a secret into hierarchical shares according to the defined access levels
-    ///
-    /// This method uses an optimized approach that generates all master shares efficiently
-    /// and then distributes them to the different hierarchical levels according to their
-    /// configured share counts. It leverages the underlying Shamir scheme's optimized
-    /// implementation for maximum performance.
-    ///
-    /// # Arguments
-    /// * `secret` - The secret data to be split and distributed
-    ///
-    /// # Returns
-    /// A vector of `HierarchicalShare` instances, one for each defined access level.
-    /// Each `HierarchicalShare` contains the level name and the shares allocated to that level.
-    ///
-    /// # Process
-    /// 1. **Generate all master shares**: Use the underlying Shamir scheme to generate all shares
-    /// 2. **Distribution**: Distribute shares to hierarchical levels according to their counts
-    ///
-    /// # Performance
-    /// This implementation:
-    /// - Uses the underlying Shamir scheme to generate all shares at once
-    /// - Maintains identical security properties and output
-    ///
-    /// # Errors
-    /// Returns `ShamirError` if:
-    /// - The underlying Shamir scheme encounters an error
-    /// - Memory allocation fails for large secrets
-    /// - Internal computation errors occur
-    ///
-    /// # Example
-    /// ```
-    /// use shamir_share::hsss::Hsss;
-    ///
-    /// let mut hsss = Hsss::builder(5)
-    ///     .add_level("President", 5)
-    ///     .add_level("VP", 3)
-    ///     .add_level("Executive", 2)
-    ///     .build()
-    ///     .unwrap();
-    ///
-    /// let secret = b"top secret data";
-    /// let hierarchical_shares = hsss.split_secret(secret).unwrap();
-    ///
-    /// assert_eq!(hierarchical_shares.len(), 3);
-    /// assert_eq!(hierarchical_shares[0].level_name, "President");
-    /// assert_eq!(hierarchical_shares[0].shares.len(), 5);
-    /// assert_eq!(hierarchical_shares[1].level_name, "VP");
-    /// assert_eq!(hierarchical_shares[1].shares.len(), 3);
-    /// assert_eq!(hierarchical_shares[2].level_name, "Executive");
-    /// assert_eq!(hierarchical_shares[2].shares.len(), 2);
-    /// ```
-    ///
-    /// # Security
-    /// - Inherits all security properties from the underlying Shamir scheme
-    /// - Uses cryptographically secure random number generation
-    /// - Constant-time operations prevent side-channel attacks
-    /// - Each share reveals no information about the secret without meeting the threshold
-    pub fn split_secret(&mut self, secret: &[u8]) -> Result<Vec<HierarchicalShare>> {
-        let all_master_shares = self.master_scheme.split(secret)?;
-
-        // Distribute master shares to hierarchical levels
+    /// Distributes master shares to hierarchical levels according to their configured counts.
+    fn distribute_shares(&self, all_master_shares: Vec<Share>) -> Result<Vec<HierarchicalShare>> {
         let mut share_iter = all_master_shares.into_iter();
         let mut hierarchical_shares = Vec::with_capacity(self.levels.len());
 
@@ -546,7 +493,6 @@ impl Hsss {
             let mut shares = Vec::with_capacity(level.shares_count as usize);
 
             for _ in 0..level.shares_count {
-                // Take the next master share
                 let share = share_iter.next().ok_or_else(|| {
                     ShamirError::InvalidConfig(format!(
                         "Insufficient master shares available for level '{}': this should not happen",
@@ -557,7 +503,6 @@ impl Hsss {
                 shares.push(share);
             }
 
-            // Create the hierarchical share for this level
             let hierarchical_share = HierarchicalShare {
                 level_name: level.name.clone(),
                 shares,
@@ -567,6 +512,31 @@ impl Hsss {
         }
 
         Ok(hierarchical_shares)
+    }
+
+    /// Splits a secret into hierarchical shares using a caller-provided random number generator.
+    ///
+    /// Available in `#![no_std]` mode.
+    pub fn split_secret_with_rng<R: rand_chacha::rand_core::Rng>(
+        &mut self,
+        secret: &[u8],
+        rng: &mut R,
+    ) -> Result<Vec<HierarchicalShare>> {
+        let all_master_shares = self.master_scheme.split_with_rng(secret, rng)?;
+        self.distribute_shares(all_master_shares)
+    }
+
+    /// Splits a secret into hierarchical shares using system entropy.
+    ///
+    /// # Security
+    /// - Inherits all security properties from the underlying Shamir scheme
+    /// - Uses cryptographically secure random number generation
+    /// - Constant-time operations prevent side-channel attacks
+    /// - Each share reveals no information about the secret without meeting the threshold
+    #[cfg(feature = "std")]
+    pub fn split_secret(&mut self, secret: &[u8]) -> Result<Vec<HierarchicalShare>> {
+        let all_master_shares = self.master_scheme.split(secret)?;
+        self.distribute_shares(all_master_shares)
     }
 
     /// Reconstructs the original secret from hierarchical shares
@@ -676,9 +646,10 @@ impl Hsss {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn test_access_level_creation() {

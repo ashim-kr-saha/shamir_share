@@ -7,47 +7,48 @@
 //! ## Security Features
 //!
 //! - **Constant-time GF(2^8) arithmetic** - Eliminates lookup tables and secret-dependent branches to prevent cache-timing attacks
-//! - **Cryptographically secure random generation** - Uses `ChaCha20Rng` seeded from system entropy (`SysRng`)
-//! - **Corruption detection** - SHA-256 digest verification with constant-time comparison (`subtle::ConstantTimeEq`) to detect accidental bit-rot and framing desynchronization (unkeyed; note that because Shamir's scheme is linear over GF(2^8), unkeyed hashes detect corruption rather than providing cryptographic authenticity against active adversaries possessing shares with known plaintext)
-//! - **Atomic storage** - Shares are persisted via atomic temporary-file-and-rename with `0o600` permissions on Unix
-//! - **Memory hygiene** - Optional `zeroize` feature securely clears sensitive buffers and polynomial coefficients on drop
-//! - **Memory safety** - Written in safe Rust with zero unsafe blocks (`#![forbid(unsafe_code)]`)
+//! - **Cryptographically secure random generation** - Uses `ChaCha20Rng` seeded from system entropy (`SysRng`) or caller-provided RNG
+//! - **Corruption detection** - SHA-256 digest verification with constant-time comparison (`subtle::ConstantTimeEq`) to detect accidental bit-rot and framing desynchronization
+//! - **Canonical wire format** - Self-contained zero-dependency binary serialization via `Share::to_bytes()` and `Share::from_bytes()`
+//! - **Memory hygiene** - Securely clears sensitive buffers on drop with fallback zeroization and optional `zeroize` crate integration
+//! - **Memory safety** - Written in 100% safe Rust with zero unsafe blocks (`#![forbid(unsafe_code)]`)
+//! - **Embedded & Enclave Ready** - Full `#![no_std]` + `alloc` support for embedded devices, hardware wallets, and WebAssembly
 //!
 //! # Quick Start
 //!
 //! ## Basic Usage
 //! ```
-//! use shamir_share::{ShamirShare, FileShareStore, ShareStore};
+//! # #[cfg(feature = "std")]
+//! # {
+//! use shamir_share::{ShamirShare, Share};
 //!
 //! // Create a scheme with 5 shares and threshold 3
-//! let mut scheme = ShamirShare::builder(5, 3).build().unwrap();
+//! let scheme = ShamirShare::builder(5, 3).build().unwrap();
 //!
 //! // Split a secret
 //! let secret = b"my secret data";
 //! let shares = scheme.split(secret).unwrap();
 //!
-//! // Store shares
-//! let temp_dir = tempfile::tempdir().unwrap();
-//! let mut store = FileShareStore::new(temp_dir.path()).unwrap();
-//! for share in &shares {
-//!     store.store_share(share).unwrap();
-//! }
+//! // Serialize shares to canonical bytes
+//! let serialized_shares: Vec<Vec<u8>> = shares.iter().map(|s| s.to_bytes()).collect();
 //!
-//! // Reconstruct from 3 shares
-//! let loaded_shares = vec![
-//!     store.load_share(1).unwrap(),
-//!     store.load_share(2).unwrap(),
-//!     store.load_share(3).unwrap(),
-//! ];
+//! // Deserialize and reconstruct from 3 shares
+//! let loaded_shares: Vec<Share> = serialized_shares[0..3]
+//!     .iter()
+//!     .map(|b| Share::from_bytes(b).unwrap())
+//!     .collect();
 //! let reconstructed = ShamirShare::reconstruct(&loaded_shares).unwrap();
 //! assert_eq!(reconstructed.as_slice(), secret);
+//! # }
 //! ```
 //!
 //! ## Lazy Share Generation with Dealer
 //! ```
+//! # #[cfg(feature = "std")]
+//! # {
 //! use shamir_share::ShamirShare;
 //!
-//! let mut scheme = ShamirShare::builder(10, 5).build().unwrap();
+//! let scheme = ShamirShare::builder(10, 5).build().unwrap();
 //! let secret = b"my secret data";
 //!
 //! // Generate only the shares you need
@@ -61,30 +62,80 @@
 //!
 //! let reconstructed = ShamirShare::reconstruct(&shares).unwrap();
 //! assert_eq!(reconstructed.as_slice(), secret);
+//! # }
 //! ```
 
+#![no_std]
 #![forbid(unsafe_code)]
+
+#[cfg(feature = "std")]
+extern crate std;
+
+extern crate alloc;
 
 #[cfg(feature = "zeroize")]
 pub use zeroize::Zeroizing;
 
 #[cfg(not(feature = "zeroize"))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Zeroizing<T>(pub T);
+pub trait ZeroizeFallback {
+    fn zeroize_fallback(&mut self);
+}
 
 #[cfg(not(feature = "zeroize"))]
-impl<T> Zeroizing<T> {
-    pub fn new(val: T) -> Self {
-        Self(val)
-    }
-
-    pub fn into_inner(self) -> T {
-        self.0
+impl<T: AsMut<[u8]>> ZeroizeFallback for T {
+    fn zeroize_fallback(&mut self) {
+        let slice = self.as_mut();
+        for b in slice.iter_mut() {
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            *b = 0;
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        }
     }
 }
 
 #[cfg(not(feature = "zeroize"))]
-impl<T> std::ops::Deref for Zeroizing<T> {
+pub struct Zeroizing<T: ZeroizeFallback>(pub T);
+
+#[cfg(not(feature = "zeroize"))]
+impl<T: ZeroizeFallback> Zeroizing<T> {
+    pub fn new(val: T) -> Self {
+        Self(val)
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl<T: ZeroizeFallback + Clone> Clone for Zeroizing<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl<T: ZeroizeFallback + PartialEq> PartialEq for Zeroizing<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl<T: ZeroizeFallback + Eq> Eq for Zeroizing<T> {}
+
+#[cfg(not(feature = "zeroize"))]
+impl<T: ZeroizeFallback> core::fmt::Debug for Zeroizing<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("Zeroizing { .. }")
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl<T: ZeroizeFallback> Drop for Zeroizing<T> {
+    fn drop(&mut self) {
+        self.0.zeroize_fallback();
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl<T: ZeroizeFallback> core::ops::Deref for Zeroizing<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -92,7 +143,7 @@ impl<T> std::ops::Deref for Zeroizing<T> {
 }
 
 #[cfg(not(feature = "zeroize"))]
-impl<T> std::ops::DerefMut for Zeroizing<T> {
+impl<T: ZeroizeFallback> core::ops::DerefMut for Zeroizing<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -101,38 +152,43 @@ impl<T> std::ops::DerefMut for Zeroizing<T> {
 mod config;
 mod error;
 mod finite_field;
+#[cfg(feature = "hsss")]
 pub mod hsss;
 mod shamir;
-mod storage;
 
 pub use config::{Config, MAX_CONFIG_CHUNK_SIZE, MAX_DEFAULT_STREAM_DECOMPRESSED_SIZE, SplitMode};
 pub use error::{Result, ShamirError};
 pub use finite_field::FiniteField;
+#[cfg(feature = "hsss")]
 pub use hsss::{AccessLevel, HierarchicalShare, Hsss, HsssBuilder};
-pub use shamir::{Dealer, ShamirShare, ShamirShareBuilder, Share, ShareView};
-pub use storage::{FileShareStore, ShareStore};
+pub use shamir::{
+    Dealer, MAX_SHARE_DATA_LEN, SHARE_WIRE_MAGIC, SHARE_WIRE_VERSION, ShamirShare,
+    ShamirShareBuilder, Share, ShareView,
+};
+
+#[cfg(feature = "streaming")]
+pub use shamir::{STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
 
 // Re-export common types for convenience
 pub mod prelude {
+    #[cfg(feature = "hsss")]
+    pub use super::{AccessLevel, HierarchicalShare, Hsss, HsssBuilder};
     pub use super::{
-        AccessLevel, Config, Dealer, FileShareStore, HierarchicalShare, Hsss, HsssBuilder, Result,
-        ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareStore, ShareView, SplitMode,
-        Zeroizing,
+        Config, Dealer, FiniteField, MAX_SHARE_DATA_LEN, Result, SHARE_WIRE_MAGIC,
+        SHARE_WIRE_VERSION, ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareView,
+        SplitMode, Zeroizing,
     };
+    #[cfg(feature = "streaming")]
+    pub use super::{STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "std"))]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use alloc::vec::Vec;
 
     #[test]
     fn test_full_workflow() -> Result<()> {
-        // Create a temporary directory for storing shares
-        let temp_dir = tempdir()?;
-        let mut store = FileShareStore::new(temp_dir.path())?;
-
-        // Create secret data
         let secret = b"This is a secret message that needs to be protected!";
 
         // Configure Shamir's Secret Sharing
@@ -141,19 +197,17 @@ mod tests {
         // Split the secret into shares
         let shares = shamir.split(secret)?;
 
-        // Store all shares
+        // Serialize all shares to canonical wire format
+        let mut serialized = Vec::new();
         for share in &shares {
-            store.store_share(share)?;
+            serialized.push(share.to_bytes());
         }
+        assert_eq!(serialized.len(), 5);
 
-        // List available shares
-        let available_shares = store.list_shares()?;
-        assert_eq!(available_shares.len(), 5);
-
-        // Load a subset of shares for reconstruction
+        // Deserialize a subset of shares for reconstruction
         let mut reconstruction_shares = Vec::new();
-        for &index in &available_shares[0..3] {
-            reconstruction_shares.push(store.load_share(index)?);
+        for bytes in &serialized[0..3] {
+            reconstruction_shares.push(Share::from_bytes(bytes)?);
         }
 
         // Reconstruct the secret
@@ -165,9 +219,6 @@ mod tests {
 
     #[test]
     fn test_with_config() -> Result<()> {
-        let temp_dir = tempdir()?;
-        let mut store = FileShareStore::new(temp_dir.path())?;
-
         // Create a custom configuration
         #[allow(unused_mut)]
         let mut config = Config::new()
@@ -185,14 +236,11 @@ mod tests {
         let shamir = ShamirShare::builder(5, 3).with_config(config).build()?;
         let shares = shamir.split(secret)?;
 
-        // Store and reconstruct
-        for share in &shares {
-            store.store_share(share)?;
-        }
-
+        // Serialize and reconstruct
         let mut loaded_shares = Vec::new();
-        for i in 1..=3 {
-            loaded_shares.push(store.load_share(i)?);
+        for share in &shares[0..3] {
+            let bytes = share.to_bytes();
+            loaded_shares.push(Share::from_bytes(&bytes)?);
         }
 
         let reconstructed = ShamirShare::reconstruct(&loaded_shares)?;

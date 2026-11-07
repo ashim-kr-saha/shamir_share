@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
@@ -24,13 +27,27 @@ jobs:
             flags: "--all-features"
           - name: no-default-features
             flags: "--no-default-features"
+          - name: std-only
+            flags: "--no-default-features --features std"
           - name: zeroize-only
-            flags: "--no-default-features --features zeroize"
+            flags: "--no-default-features --features std,zeroize"
+          - name: streaming-only
+            flags: "--no-default-features --features std,streaming"
+          - name: hsss-only
+            flags: "--no-default-features --features std,hsss"
+          - name: refresh-only
+            flags: "--no-default-features --features std,refresh"
+          - name: parallel-only
+            flags: "--no-default-features --features std,parallel"
           - name: compress-only
-            flags: "--no-default-features --features compress"
+            flags: "--no-default-features --features std,compress"
+          - name: serde-only
+            flags: "--no-default-features --features std,serde"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -43,12 +60,37 @@ jobs:
       - name: Run tests (${{ matrix.feature-set.name }})
         run: cargo test ${{ matrix.feature-set.flags }}
 
+  no-std-check:
+    name: No-Std (Wasm32) Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain with wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Check wasm32 compilation without default features
+        run: cargo check --target wasm32-unknown-unknown --no-default-features
+
+      - name: Check wasm32 with hsss and refresh
+        run: cargo check --target wasm32-unknown-unknown --no-default-features --features "hsss,refresh"
+
+      - name: Check wasm32 with serde
+        run: cargo check --target wasm32-unknown-unknown --no-default-features --features "serde"
+
   doc-tests:
     name: Documentation Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -64,7 +106,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -88,4 +132,3 @@ jobs:
 
       - name: Verify Package Dry-Run
         run: cargo package --allow-dirty
-

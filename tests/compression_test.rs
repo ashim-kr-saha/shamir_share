@@ -1,4 +1,4 @@
-#![cfg(feature = "compress")]
+#![cfg(all(feature = "compress", feature = "std"))]
 
 use shamir_share::{Config, ShamirShare};
 
@@ -56,6 +56,7 @@ fn test_incompressible_data() {
 }
 
 #[test]
+#[cfg(feature = "streaming")]
 fn test_streaming_with_compression() {
     use std::io::Cursor;
 

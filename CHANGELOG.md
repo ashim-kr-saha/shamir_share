@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2026-11-07
+
+### Breaking Changes
+
+- **Removed `storage.rs`**: Completely eliminated `FileShareStore`, `ShareStore` trait, and all filesystem I/O. The crate now focuses solely on pure cryptographic secret sharing and in-memory operations.
+  - Use `Share::to_bytes()` and `Share::from_bytes(&[u8])` for canonical wire serialization.
+  - Use the optional `"serde"` feature for JSON/Bincode serialization.
+- **`#![no_std]` + `alloc` by Default**:
+  - The crate is now `#![no_std]` compatible out-of-the-box.
+  - Convenience methods that rely on system entropy (`ShamirShare::split`, `ShamirShare::try_dealer`, `Hsss::split_secret`, `ShamirShare::refresh_shares`, `ShamirShare::split_stream`) require the `"std"` feature.
+  - In `#![no_std]` environments (embedded, WASM), use `split_with_rng`, `try_dealer_with_rng`, `split_secret_with_rng`, and `refresh_shares_with_rng` with any `rand_core::Rng`.
+- **Modular Feature Flags**:
+  - `default = ["std", "zeroize", "streaming", "hsss", "refresh"]`
+  - High-level capabilities are now individually toggled via Cargo features:
+    - `"streaming"`: `split_stream` and `reconstruct_stream` I/O routines.
+    - `"hsss"`: Hierarchical Shamir Secret Sharing module.
+    - `"refresh"`: Proactive share refresh routines.
+    - `"parallel"`: Rayon multi-threaded polynomial evaluation and reconstruction.
+    - `"compress"`: Zstandard compression and decompression.
+    - `"serde"`: Serde `Serialize` and `Deserialize` derivations on `Share`.
+- **Chunk Size Limit**: `MAX_CONFIG_CHUNK_SIZE` reduced from 64 MiB to 16 MiB.
+
+### Added
+
+- **Canonical Wire Format**: `Share::to_bytes()` and `Share::from_bytes(&[u8])` providing zero-dependency serialization with version 3 (`b"SHS1"`), 8-byte framing header, and strict bounds checking.
+- **Optional Serde Support**: Added `#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]` on `Share`.
+- **`#![no_std]` Fallback `Zeroizing`**: Built-in fallback wrapper when `"zeroize"` feature is disabled or on `#![no_std]`, performing volatile zeroing on drop and redacting secrets in `Debug`.
+- **Cumulative Buffer Budget**: Enforced 256 MiB allocation limit on `chunk_size * total_shares` in `split_stream`.
+- **Fuzzing Modernization**: Added `fuzz_share_from_bytes` target exercising wire format parsing.
+
+### Security
+
+- **Filesystem Attack Surface Eliminated**: Removing `storage.rs` permanently eliminates TOCTOU races, symlink follow vulnerabilities, temporary file persistence, and platform file permission discrepancies.
+- **HMAC Buffer Hygiene**: Explicitly zeroized `ipad` and `opad` padding buffers during keyed HMAC digest computation.
+- **Debug Redaction**: Redacted `authentication_key` in `Config` `Debug` output.
+- **CI/CD Supply Chain Hardening**: Pinned GitHub Actions to immutable full commit SHAs, enforced `permissions: contents: read`, added tag-to-Cargo.toml version verification, and used `--locked` on `cargo publish`.
+
 ## [0.3.0] - 2026-11-06
 
 ### Breaking Changes
