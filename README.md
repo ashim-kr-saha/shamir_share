@@ -28,14 +28,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-shamir_share = "0.4.0"
+shamir_share = "0.3.0"
 ```
 
 For `#![no_std]` environments (hardware wallets, secure enclaves, embedded systems):
 
 ```toml
 [dependencies]
-shamir_share = { version = "0.4.0", default-features = false, features = ["alloc"] }
+shamir_share = { version = "0.3.0", default-features = false, features = ["alloc"] }
 ```
 
 ## Quick Start
