@@ -35,7 +35,7 @@ For `#![no_std]` environments (hardware wallets, secure enclaves, embedded syste
 
 ```toml
 [dependencies]
-shamir_share = { version = "0.3.0", default-features = false, features = ["alloc"] }
+shamir_share = { version = "0.3.0", default-features = false }
 ```
 
 ## Quick Start

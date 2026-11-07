@@ -86,10 +86,10 @@ impl<T: AsMut<[u8]>> ZeroizeFallback for T {
     fn zeroize_fallback(&mut self) {
         let slice = self.as_mut();
         for b in slice.iter_mut() {
-            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-            *b = 0;
-            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            *b = core::hint::black_box(0);
         }
+        core::hint::black_box(&mut *slice);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 }
 

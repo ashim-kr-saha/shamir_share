@@ -34,9 +34,13 @@ use std::io::Write;
 
 use subtle::ConstantTimeEq;
 
+#[cfg(not(feature = "zeroize"))]
+use crate::ZeroizeFallback;
 use crate::Zeroizing;
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
+#[cfg(not(feature = "zeroize"))]
+use crate::ZeroizeFallback;
 
 const HASH_SIZE: usize = 32; // SHA-256 output size
 const SALT_SIZE: usize = 32; // Ephemeral 256-bit salt for in-memory shares (F-01, F-02)
@@ -90,6 +94,7 @@ pub const STREAM_ID_SIZE: usize = 16;
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "ShareHelper"))]
 pub struct Share {
     /// Index of the share (x-coordinate in the polynomial, 1..=255)
     pub index: u8,
@@ -103,6 +108,96 @@ pub struct Share {
     pub integrity_check: bool,
     /// Whether the data was compressed before splitting
     pub compression: bool,
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl Drop for Share {
+    fn drop(&mut self) {
+        self.data.zeroize_fallback();
+        self.index = 0;
+        self.threshold = 0;
+        self.total_shares = 0;
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct ShareHelper {
+    index: u8,
+    data: Vec<u8>,
+    threshold: u8,
+    total_shares: u8,
+    integrity_check: bool,
+    compression: bool,
+}
+
+#[cfg(feature = "serde")]
+impl core::convert::TryFrom<ShareHelper> for Share {
+    type Error = ShamirError;
+
+    fn try_from(h: ShareHelper) -> core::result::Result<Self, Self::Error> {
+        if h.index == 0
+            || h.index > h.total_shares
+            || h.threshold < 2
+            || h.threshold > h.total_shares
+        {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        if h.data.len() > MAX_SHARE_DATA_LEN {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        Ok(Self {
+            index: h.index,
+            data: h.data,
+            threshold: h.threshold,
+            total_shares: h.total_shares,
+            integrity_check: h.integrity_check,
+            compression: h.compression,
+        })
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl Drop for Share {
+    fn drop(&mut self) {
+        self.data.zeroize_fallback();
+        self.index = 0;
+        self.threshold = 0;
+        self.total_shares = 0;
+    }
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct ShareHelper {
+    index: u8,
+    data: Vec<u8>,
+    threshold: u8,
+    total_shares: u8,
+    integrity_check: bool,
+    compression: bool,
+}
+
+#[cfg(feature = "serde")]
+impl core::convert::TryFrom<ShareHelper> for Share {
+    type Error = ShamirError;
+
+    fn try_from(h: ShareHelper) -> core::result::Result<Self, Self::Error> {
+        if h.index == 0 || h.index > h.total_shares || h.threshold < 2 || h.threshold > h.total_shares {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        if h.data.len() > MAX_SHARE_DATA_LEN {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        Ok(Self {
+            index: h.index,
+            data: h.data,
+            threshold: h.threshold,
+            total_shares: h.total_shares,
+            integrity_check: h.integrity_check,
+            compression: h.compression,
+        })
+    }
 }
 
 /// Magic bytes for canonical binary serialized shares ("SHS1")
@@ -387,6 +482,15 @@ pub struct Dealer {
     integrity_check: bool,
     /// Whether the data was compressed before splitting
     compression: bool,
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl Drop for Dealer {
+    fn drop(&mut self) {
+        self.data.zeroize_fallback();
+        self.coefficients.zeroize_fallback();
+        self.current_x = 0;
+    }
 }
 
 impl fmt::Debug for Dealer {
@@ -1051,6 +1155,10 @@ impl ShamirShare {
         let compression = views[0].compression;
         let data_len = views[0].data.len();
 
+        if data_len > MAX_SHARE_DATA_LEN {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+
         if threshold < 2 || threshold > total_shares {
             return Err(ShamirError::InvalidThreshold(threshold));
         }
@@ -1176,7 +1284,7 @@ impl ShamirShare {
                 ))
             }
         } else {
-            Ok(Zeroizing::new(reconstructed_data.to_vec()))
+            Ok(reconstructed_data)
         }
     }
 
@@ -1422,10 +1530,12 @@ impl ShamirShare {
     /// # Important
     /// Plaintext chunks are written incrementally to `destination` as each chunk is verified.
     /// If an error occurs midway through reconstruction (e.g. `IntegrityCheckFailed` or an unexpected EOF),
-    /// the caller must discard the partially written data in `destination`.
+    /// the caller must discard the partially written data in `destination` (e.g. by writing to a temporary file
+    /// and committing it atomically only on success).
     ///
-    /// Note that if more than `threshold` stream sources are provided, only the first `threshold` sources
-    /// in the slice are evaluated during reconstruction.
+    /// When more than `threshold` stream sources are provided, all excess sources are actively verified
+    /// in GF(2^8) against the reconstructed chunks. If any excess share stream is corrupted or inconsistent,
+    /// reconstruction immediately fails with [`ShamirError::IntegrityCheckFailed`].
     ///
     /// # Arguments
     /// * `sources` - Array of readers, one for each share (must have at least `threshold` sources)
@@ -1657,33 +1767,24 @@ impl ShamirShare {
                 return Err(ShamirError::InconsistentShareLength);
             }
 
-            if reconstructed_chunk_buffer.len() != first_len {
-                reconstructed_chunk_buffer.clear();
-                reconstructed_chunk_buffer
-                    .try_reserve_exact(first_len)
-                    .map_err(|_| {
-                        ShamirError::StorageError("Memory allocation failed for chunk".into())
-                    })?;
-                reconstructed_chunk_buffer.resize(first_len, 0);
-            } else {
-                reconstructed_chunk_buffer.fill(0);
-            }
+            reconstructed_chunk_buffer.clear();
 
             let mut read_total = 0;
             while read_total < first_len {
                 let to_read = (first_len - read_total).min(65536);
+
+                // 1. Read blocks from sources FIRST so short streams/EOFs fail before allocating
                 for (i, source) in sources[..active_count].iter_mut().enumerate() {
                     source
                         .read_exact(&mut active_block_bufs[i][..to_read])
                         .map_err(ShamirError::IoError)?;
-                    let coeff = lagrange_coefficients[i];
-                    for b in 0..to_read {
-                        let f_byte = FiniteField::new(active_block_bufs[i][b]);
-                        reconstructed_chunk_buffer[read_total + b] ^= (coeff * f_byte).0;
-                    }
                 }
 
                 for (e, source) in sources[active_count..].iter_mut().enumerate() {
+                    source
+                        .read_exact(&mut excess_read_buf[..to_read])
+                        .map_err(ShamirError::IoError)?;
+
                     excess_expected_block[..to_read].fill(0);
                     let basis = &excess_basis_coefficients[e];
                     for (i, block) in active_block_bufs.iter().enumerate() {
@@ -1693,13 +1794,27 @@ impl ShamirShare {
                             excess_expected_block[b] ^= (coeff * f_byte).0;
                         }
                     }
-                    source
-                        .read_exact(&mut excess_read_buf[..to_read])
-                        .map_err(ShamirError::IoError)?;
                     if !bool::from(
                         excess_read_buf[..to_read].ct_eq(&excess_expected_block[..to_read]),
                     ) {
                         return Err(ShamirError::IntegrityCheckFailed);
+                    }
+                }
+
+                // 2. Incrementally allocate and zero the block in reconstructed_chunk_buffer
+                let block_start = reconstructed_chunk_buffer.len();
+                reconstructed_chunk_buffer
+                    .try_reserve(to_read)
+                    .map_err(|_| {
+                        ShamirError::StorageError("Memory allocation failed for chunk".into())
+                    })?;
+                reconstructed_chunk_buffer.resize(block_start + to_read, 0);
+
+                // 3. Interpolate active sources into the newly allocated block
+                for (i, &coeff) in lagrange_coefficients.iter().enumerate() {
+                    for b in 0..to_read {
+                        let f_byte = FiniteField::new(active_block_bufs[i][b]);
+                        reconstructed_chunk_buffer[block_start + b] ^= (coeff * f_byte).0;
                     }
                 }
 
@@ -2050,13 +2165,14 @@ impl ShamirShare {
         })?;
         let mut strip_coeffs = Zeroizing::new(vec![0u8; max_strip_coeffs]);
 
-        let mut delta_shares: Vec<Zeroizing<Vec<u8>>> = (0..share_indices.len())
-            .map(|_| {
-                let mut v = Vec::new();
-                let _ = v.try_reserve_exact(data_length);
-                Zeroizing::new(v)
-            })
-            .collect();
+        let mut delta_shares: Vec<Zeroizing<Vec<u8>>> = Vec::with_capacity(share_indices.len());
+        for _ in 0..share_indices.len() {
+            let mut v = Vec::new();
+            v.try_reserve_exact(data_length).map_err(|_| {
+                ShamirError::StorageError("Memory allocation failed for refresh deltas".into())
+            })?;
+            delta_shares.push(Zeroizing::new(v));
+        }
 
         let mut offset = 0;
         while offset < data_length {
@@ -2110,14 +2226,26 @@ impl ShamirShare {
                 return Err(ShamirError::InvalidShareFormat);
             }
         }
-        let deltas =
+        const MAX_TOTAL_REFRESH_BUFFER_BUDGET: usize = 256 * 1024 * 1024;
+        let total_delta_memory = data_length
+            .checked_mul(share_indices.len())
+            .ok_or_else(|| {
+                ShamirError::InvalidConfig("Total refresh buffer budget overflow".into())
+            })?;
+        if total_delta_memory > MAX_TOTAL_REFRESH_BUFFER_BUDGET {
+            return Err(ShamirError::InvalidConfig(format!(
+                "Total refresh buffer size {} exceeds maximum budget {}",
+                total_delta_memory, MAX_TOTAL_REFRESH_BUFFER_BUDGET
+            )));
+        }
+        let mut deltas =
             self.generate_zero_polynomial_shares_with_rng(share_indices, data_length, rng)?;
         let result = share_indices
             .iter()
-            .zip(deltas)
+            .zip(&mut deltas)
             .map(|(&index, delta)| Share {
                 index,
-                data: delta.to_vec(),
+                data: core::mem::take(&mut *delta),
                 threshold: self.threshold,
                 total_shares: self.total_shares,
                 integrity_check: self.config.integrity_check(),

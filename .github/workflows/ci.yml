@@ -55,7 +55,7 @@ jobs:
           toolchain: ${{ matrix.rust }}
 
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
 
       - name: Run tests (${{ matrix.feature-set.name }})
         run: cargo test ${{ matrix.feature-set.flags }}
@@ -96,7 +96,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
 
       - name: Run doc tests
         run: cargo test --doc --all-features
@@ -116,7 +116,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
 
       - name: Check code formatting
         run: cargo fmt --all -- --check

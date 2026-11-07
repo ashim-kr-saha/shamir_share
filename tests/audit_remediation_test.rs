@@ -231,3 +231,79 @@ fn test_f13_error_needed_on_empty_reconstruct() {
         ShamirError::InsufficientShares { needed: 3, got: 0 }
     ));
 }
+
+#[test]
+fn test_sec02_refresh_budget_overflow_rejected() {
+    let scheme = ShamirShare::builder(255, 3).build().unwrap();
+    // 255 shares * 2 MiB = 510 MiB, which exceeds 256 MiB budget
+    let indices: Vec<u8> = (1..=255).collect();
+    let err = scheme.generate_refresh_deltas(&indices, 2 * 1024 * 1024);
+    assert!(matches!(err, Err(ShamirError::InvalidConfig(_))));
+}
+
+#[test]
+fn test_sec06_reconstruct_oversized_share_rejected() {
+    let oversized_data = vec![0u8; shamir_share::MAX_SHARE_DATA_LEN + 1];
+    let share1 = Share::new(1, oversized_data.clone(), 2, 3, false, false);
+    let share2 = Share::new(2, oversized_data, 2, 3, false, false);
+    let err = ShamirShare::reconstruct(&[share1, share2]);
+    assert!(matches!(err, Err(ShamirError::InvalidShareFormat)));
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn test_sec07_serde_invariant_validation() {
+    // 1. Zero index rejected
+    let json_zero_idx = r#"{"index":0,"data":[1,2,3],"threshold":2,"total_shares":3,"integrity_check":false,"compression":false}"#;
+    assert!(serde_json::from_str::<Share>(json_zero_idx).is_err());
+
+    // 2. Index > total_shares rejected
+    let json_high_idx = r#"{"index":4,"data":[1,2,3],"threshold":2,"total_shares":3,"integrity_check":false,"compression":false}"#;
+    assert!(serde_json::from_str::<Share>(json_high_idx).is_err());
+
+    // 3. Threshold < 2 rejected
+    let json_low_thresh = r#"{"index":1,"data":[1,2,3],"threshold":1,"total_shares":3,"integrity_check":false,"compression":false}"#;
+    assert!(serde_json::from_str::<Share>(json_low_thresh).is_err());
+
+    // 4. Threshold > total_shares rejected
+    let json_high_thresh = r#"{"index":1,"data":[1,2,3],"threshold":4,"total_shares":3,"integrity_check":false,"compression":false}"#;
+    assert!(serde_json::from_str::<Share>(json_high_thresh).is_err());
+
+    // 5. Valid share deserializes properly
+    let json_valid = r#"{"index":1,"data":[1,2,3],"threshold":2,"total_shares":3,"integrity_check":false,"compression":false}"#;
+    let s: Share = serde_json::from_str(json_valid).unwrap();
+    assert_eq!(s.index, 1);
+    assert_eq!(s.threshold, 2);
+    assert_eq!(s.total_shares, 3);
+}
+
+#[test]
+fn test_sec03_stream_early_eof_fails_before_amplification() {
+    let stream_id = [0x55u8; 16];
+    let mut header = Vec::new();
+    header.extend_from_slice(b"SHS_STR");
+    header.push(2); // version
+    header.extend_from_slice(&stream_id);
+    header.push(1); // flags (integrity_check = true)
+    header.push(1); // index
+    header.push(2); // threshold
+    header.push(2); // total_shares
+
+    let mut stream1 = header.clone();
+    // Chunk length claiming 64 MiB (64 * 1024 * 1024 = 67108864)
+    let claimed_len = 64u32 * 1024 * 1024;
+    stream1.extend_from_slice(&claimed_len.to_le_bytes());
+    // Only supply 10 bytes instead of 64 MiB
+    stream1.extend_from_slice(&[0xAA; 10]);
+
+    let mut stream2 = header;
+    stream2[25] = 2; // index = 2
+    stream2.extend_from_slice(&claimed_len.to_le_bytes());
+    stream2.extend_from_slice(&[0xBB; 10]);
+
+    let mut sources = [Cursor::new(stream1), Cursor::new(stream2)];
+    let mut out = Vec::new();
+
+    let err = ShamirShare::reconstruct_stream(&mut sources, &mut out);
+    assert!(matches!(err, Err(ShamirError::IoError(_))));
+}

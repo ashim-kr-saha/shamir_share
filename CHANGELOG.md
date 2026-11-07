@@ -32,11 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Strict Share Count in `refresh_shares`**: Refreshing shares now strictly requires all `total_shares` to prevent invalidating remaining shares.
 - **Type Signature of `Share::apply_refresh_delta`**: Now takes `&Share` instead of raw byte slices, ensuring the delta belongs to the matching share index.
 - **Strict Share Index Bounds**: All operations now reject share index `0` or indices greater than `total_shares`.
-- **Chunk Size Limit**: `MAX_CONFIG_CHUNK_SIZE` reduced from 64 MiB to 16 MiB.
+- **Chunk Size Limit**: `MAX_CONFIG_CHUNK_SIZE` enforced at 64 MiB to bound memory consumption and avoid buffer overflow DoS.
 
 ### Added
 
-- **Canonical Wire Format**: `Share::to_bytes()` and `Share::from_bytes(&[u8])` providing zero-dependency serialization with version 3 (`b"SHS1"`), 8-byte framing header, and strict bounds checking.
+- **Canonical Wire Format**: `Share::to_bytes()` and `Share::from_bytes(&[u8])` providing zero-dependency serialization with version 3 (`b"SHS1"`), 13-byte framing header, and strict bounds checking.
 - **Optional Serde Support**: Added `#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]` on `Share`.
 - **`#![no_std]` Fallback `Zeroizing`**: Built-in fallback wrapper when `"zeroize"` feature is disabled or on `#![no_std]`, performing volatile zeroing on drop and redacting secrets in `Debug`.
 - **Excess Share Consistency Checking**: When more than `threshold` shares are supplied to `reconstruct` or `reconstruct_stream`, all additional shares are cross-verified against the reconstructed secret to catch any corrupted or tampered shares.
