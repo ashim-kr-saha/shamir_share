@@ -829,7 +829,7 @@ mod tests {
         assert_eq!(level.name, "");
         assert_eq!(level.shares_count, 0);
 
-        let mut share = crate::Share::new(1, vec![0x42; 32], 3, 5, true, false);
+        let mut share = crate::Share::new(1, vec![0x42; 32], 3, 5, true, false).unwrap();
         share.zeroize();
         assert_eq!(share.index, 0);
         assert_eq!(share.threshold, 0);
@@ -840,7 +840,7 @@ mod tests {
 
         let mut hierarchical_share = HierarchicalShare {
             level_name: "Secret".to_string(),
-            shares: vec![crate::Share::new(1, vec![0x42; 32], 3, 5, true, false)],
+            shares: vec![crate::Share::new(1, vec![0x42; 32], 3, 5, true, false).unwrap()],
         };
 
         hierarchical_share.zeroize();

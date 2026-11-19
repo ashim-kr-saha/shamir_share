@@ -14,10 +14,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removed `storage.rs`**: Completely eliminated `FileShareStore`, `ShareStore` trait, and all filesystem I/O. The crate now focuses solely on pure cryptographic secret sharing and in-memory operations.
   - Use `Share::to_bytes()` and `Share::from_bytes(&[u8])` for canonical wire serialization.
   - Use the optional `"serde"` feature for JSON/Bincode serialization.
-- **`#![no_std]` + `alloc` by Default**:
-  - The crate is now `#![no_std]` compatible out-of-the-box.
+- **`#![no_std]` + `alloc` Supported**:
+  - The crate is `#![no_std]` compatible out-of-the-box when disabling default features (`default-features = false`).
   - Convenience methods that rely on system entropy (`ShamirShare::split`, `ShamirShare::try_dealer`, `Hsss::split_secret`, `ShamirShare::refresh_shares`, `ShamirShare::split_stream`) require the `"std"` feature.
   - In `#![no_std]` environments (embedded, WASM), use `split_with_rng`, `try_dealer_with_rng`, `split_secret_with_rng`, and `refresh_shares_with_rng` with any `rand_core::Rng`.
+- **Fallible `Share::to_bytes()` and `Share::new()`**:
+  - `Share::to_bytes()` now returns `Result<Vec<u8>, ShamirError>`, eliminating all panic paths.
+  - `Share::new()` now returns `Result<Self, ShamirError>`, validating indices, thresholds, and enforcing maximum payload size bounds.
+- **Cryptographic Domain Separation**:
+  - Unkeyed SHA-256 integrity digests now use `SHS1_SHA256_V3` and `SHS1_STR_SHA256_V2` domain tags, eliminating misleading "KEYED" labels.
+- **Minimum Supported Rust Version (MSRV)**:
+  - Bumped MSRV to Rust 1.88 due to dependency requirements (`sha2@0.11.1`).
+- **Re-exported `rand_core`**:
+  - Re-exported `rand_core` and `rand_core::Rng` in root and `prelude` to ensure seamless `#![no_std]` integration without version conflicts.
 - **Modular Feature Flags**:
   - `default = ["std", "zeroize", "streaming", "hsss", "refresh"]`
   - High-level capabilities are now individually toggled via Cargo features:

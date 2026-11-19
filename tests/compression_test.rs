@@ -107,7 +107,7 @@ fn test_decompression_bomb_rejected() {
     let salt = [0u8; 32];
     let flags = 3u8; // integrity_check = true (1) | compression = true (2)
     let mut hasher = Sha256::new();
-    hasher.update(b"SHS1_KEYED_V3\0");
+    hasher.update(b"SHS1_SHA256_V3\0");
     hasher.update([flags, 2, 3]);
     hasher.update(salt);
     hasher.update(&compressed_bomb);

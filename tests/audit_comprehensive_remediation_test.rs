@@ -159,8 +159,8 @@ fn test_f08_delta_index_checked() {
 
 #[test]
 fn test_f10_share_wire_format_serialization_and_validation() {
-    let share = Share::new(1, vec![10, 20, 30], 2, 3, false, false);
-    let bytes = share.to_bytes();
+    let share = Share::new(1, vec![10, 20, 30], 2, 3, false, false).unwrap();
+    let bytes = share.to_bytes().unwrap();
     let loaded = Share::from_bytes(&bytes).unwrap();
     assert_eq!(loaded, share);
 
@@ -361,8 +361,8 @@ fn test_mas09_compression_without_integrity_rejected() {
 
 #[test]
 fn test_mas10_wire_format_length_and_index_bounds() {
-    let share = Share::new(1, vec![0xAA; 100], 2, 3, true, false);
-    let bytes = share.to_bytes();
+    let share = Share::new(1, vec![0xAA; 100], 2, 3, true, false).unwrap();
+    let bytes = share.to_bytes().unwrap();
     assert_eq!(Share::from_bytes(&bytes).unwrap(), share);
 
     // Index 0 in wire bytes rejected

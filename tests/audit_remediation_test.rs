@@ -206,8 +206,8 @@ fn test_f08_constant_time_traits() {
 
 #[test]
 fn test_f11_wire_format_trailing_bytes_rejected() {
-    let share = Share::new(1, vec![10, 20, 30], 3, 5, false, false);
-    let mut bytes = share.to_bytes();
+    let share = Share::new(1, vec![10, 20, 30], 3, 5, false, false).unwrap();
+    let mut bytes = share.to_bytes().unwrap();
     assert_eq!(Share::from_bytes(&bytes).unwrap(), share);
 
     // Append malicious trailing byte to share bytes
@@ -244,10 +244,8 @@ fn test_sec02_refresh_budget_overflow_rejected() {
 #[test]
 fn test_sec06_reconstruct_oversized_share_rejected() {
     let oversized_data = vec![0u8; shamir_share::MAX_SHARE_DATA_LEN + 1];
-    let share1 = Share::new(1, oversized_data.clone(), 2, 3, false, false);
-    let share2 = Share::new(2, oversized_data, 2, 3, false, false);
-    let err = ShamirShare::reconstruct(&[share1, share2]);
-    assert!(matches!(err, Err(ShamirError::InvalidShareFormat)));
+    let share1_res = Share::new(1, oversized_data, 2, 3, false, false);
+    assert!(matches!(share1_res, Err(ShamirError::InvalidShareFormat)));
 }
 
 #[cfg(feature = "serde")]

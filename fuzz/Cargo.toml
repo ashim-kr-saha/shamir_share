@@ -29,3 +29,9 @@ name = "fuzz_reconstruct_stream"
 path = "fuzz_targets/fuzz_reconstruct_stream.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_hsss"
+path = "fuzz_targets/fuzz_hsss.rs"
+test = false
+doc = false

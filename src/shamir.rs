@@ -39,8 +39,6 @@ use crate::ZeroizeFallback;
 use crate::Zeroizing;
 #[cfg(feature = "zeroize")]
 use zeroize::{Zeroize, ZeroizeOnDrop};
-#[cfg(not(feature = "zeroize"))]
-use crate::ZeroizeFallback;
 
 const HASH_SIZE: usize = 32; // SHA-256 output size
 const SALT_SIZE: usize = 32; // Ephemeral 256-bit salt for in-memory shares (F-01, F-02)
@@ -157,49 +155,6 @@ impl core::convert::TryFrom<ShareHelper> for Share {
     }
 }
 
-#[cfg(not(feature = "zeroize"))]
-impl Drop for Share {
-    fn drop(&mut self) {
-        self.data.zeroize_fallback();
-        self.index = 0;
-        self.threshold = 0;
-        self.total_shares = 0;
-    }
-}
-
-#[cfg(feature = "serde")]
-#[derive(serde::Deserialize)]
-struct ShareHelper {
-    index: u8,
-    data: Vec<u8>,
-    threshold: u8,
-    total_shares: u8,
-    integrity_check: bool,
-    compression: bool,
-}
-
-#[cfg(feature = "serde")]
-impl core::convert::TryFrom<ShareHelper> for Share {
-    type Error = ShamirError;
-
-    fn try_from(h: ShareHelper) -> core::result::Result<Self, Self::Error> {
-        if h.index == 0 || h.index > h.total_shares || h.threshold < 2 || h.threshold > h.total_shares {
-            return Err(ShamirError::InvalidShareFormat);
-        }
-        if h.data.len() > MAX_SHARE_DATA_LEN {
-            return Err(ShamirError::InvalidShareFormat);
-        }
-        Ok(Self {
-            index: h.index,
-            data: h.data,
-            threshold: h.threshold,
-            total_shares: h.total_shares,
-            integrity_check: h.integrity_check,
-            compression: h.compression,
-        })
-    }
-}
-
 /// Magic bytes for canonical binary serialized shares ("SHS1")
 pub const SHARE_WIRE_MAGIC: &[u8; 4] = b"SHS1";
 /// Wire format version for binary serialized shares (version 3)
@@ -228,7 +183,7 @@ impl PartialEq for Share {
 impl Eq for Share {}
 
 impl Share {
-    /// Creates a new share with the given parameters
+    /// Creates a new share with the given parameters after validating invariants
     pub fn new(
         index: u8,
         data: Vec<u8>,
@@ -236,24 +191,30 @@ impl Share {
         total_shares: u8,
         integrity_check: bool,
         compression: bool,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        if index == 0 || index > total_shares || threshold < 2 || threshold > total_shares {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        if data.len() > MAX_SHARE_DATA_LEN {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        Ok(Self {
             index,
             data,
             threshold,
             total_shares,
             integrity_check,
             compression,
-        }
+        })
     }
 
     /// Serializes the share into a self-contained, canonical byte vector.
     ///
     /// Framing (version 3):
     /// `[4-byte Magic b"SHS1"][1-byte Version 3][1-byte Flags][1-byte Index][1-byte Threshold][1-byte TotalShares][4-byte DataLen (LE)][N-byte Share Data]`
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let data_len = self.data.len();
-        let len_u32 = u32::try_from(data_len).expect("Share data length exceeds u32::MAX");
+        let len_u32 = u32::try_from(data_len).map_err(|_| ShamirError::InvalidShareFormat)?;
         let mut bytes = Vec::with_capacity(13 + data_len);
         bytes.extend_from_slice(SHARE_WIRE_MAGIC);
         bytes.push(SHARE_WIRE_VERSION);
@@ -269,7 +230,7 @@ impl Share {
 
         bytes.extend_from_slice(&len_u32.to_le_bytes());
         bytes.extend_from_slice(&self.data);
-        bytes
+        Ok(bytes)
     }
 
     /// Deserializes a share from canonical binary bytes.
@@ -698,12 +659,10 @@ impl ShamirShare {
     #[cfg(feature = "compress")]
     fn decompress_bounded(payload: &[u8], max_limit: u64) -> Result<Zeroizing<Vec<u8>>> {
         let expected_size = zstd::stream::decompressed_size(payload);
-        if let Some(size) = expected_size {
-            if size > max_limit {
-                return Err(ShamirError::DecompressionError(
-                    "Decompressed payload exceeds allowed limit".into(),
-                ));
-            }
+        if expected_size.is_some_and(|size| size > max_limit) {
+            return Err(ShamirError::DecompressionError(
+                "Decompressed payload exceeds allowed limit".into(),
+            ));
         }
 
         let initial_capacity = expected_size
@@ -819,6 +778,8 @@ impl ShamirShare {
     /// use rand_chacha::ChaCha20Rng;
     /// use rand_chacha::rand_core::SeedableRng;
     ///
+    /// // WARNING: Never use a static or predictable seed in production!
+    /// // Always acquire cryptographic randomness from hardware or system entropy.
     /// let mut rng = ChaCha20Rng::from_seed([0x42; 32]);
     /// let scheme = ShamirShare::builder(5, 3).build().unwrap();
     /// let shares: Vec<_> = scheme.try_dealer_with_rng(b"secret", &mut rng).unwrap().take(3).collect();
@@ -868,7 +829,7 @@ impl ShamirShare {
             let domain = if self.config.authentication_key().is_some() {
                 b"SHS1_HMAC_V3\0".as_slice()
             } else {
-                b"SHS1_KEYED_V3\0".as_slice()
+                b"SHS1_SHA256_V3\0".as_slice()
             };
             let hash = Self::compute_digest(
                 domain,
@@ -1243,7 +1204,7 @@ impl ShamirShare {
             let domain = if auth_key.is_some() {
                 b"SHS1_HMAC_V3\0".as_slice()
             } else {
-                b"SHS1_KEYED_V3\0".as_slice()
+                b"SHS1_SHA256_V3\0".as_slice()
             };
 
             let calculated_hash = Self::compute_digest(
@@ -1457,7 +1418,7 @@ impl ShamirShare {
                 let domain = if auth_key.is_some() {
                     b"SHS1_STR_HMAC_V2\0".as_slice()
                 } else {
-                    b"SHS1_STR_KEYED_V2\0".as_slice()
+                    b"SHS1_STR_SHA256_V2\0".as_slice()
                 };
 
                 let mut meta = Vec::with_capacity(7 + 4 + 16 + 1 + 8);
@@ -1767,6 +1728,10 @@ impl ShamirShare {
                 return Err(ShamirError::InconsistentShareLength);
             }
 
+            let cap = reconstructed_chunk_buffer.capacity();
+            if cap > 0 {
+                reconstructed_chunk_buffer.resize(cap, 0);
+            }
             reconstructed_chunk_buffer.clear();
 
             let mut read_total = 0;
@@ -1835,7 +1800,7 @@ impl ShamirShare {
                 let domain = if auth_key.is_some() {
                     b"SHS1_STR_HMAC_V2\0".as_slice()
                 } else {
-                    b"SHS1_STR_KEYED_V2\0".as_slice()
+                    b"SHS1_STR_SHA256_V2\0".as_slice()
                 };
 
                 let mut meta = Vec::with_capacity(7 + 4 + 16 + 1 + 8);
@@ -1955,6 +1920,10 @@ impl ShamirShare {
         })?;
 
         for dest in destination_buffers.iter_mut() {
+            let cap = dest.capacity();
+            if cap > 0 {
+                dest.resize(cap, 0);
+            }
             dest.clear();
             dest.reserve(chunk_len);
         }
@@ -2418,6 +2387,11 @@ impl Iterator for Dealer {
                 self.data.zeroize();
                 self.coefficients.zeroize();
             }
+            #[cfg(not(feature = "zeroize"))]
+            {
+                self.data.zeroize_fallback();
+                self.coefficients.zeroize_fallback();
+            }
         } else {
             self.current_x += 1;
         }
@@ -2466,8 +2440,8 @@ mod no_std_tests {
 
     #[test]
     fn test_share_wire_roundtrip_no_std() {
-        let share = Share::new(1, vec![1, 2, 3, 4], 2, 3, true, false);
-        let bytes = share.to_bytes();
+        let share = Share::new(1, vec![1, 2, 3, 4], 2, 3, true, false).unwrap();
+        let bytes = share.to_bytes().unwrap();
         let loaded = Share::from_bytes(&bytes).unwrap();
         assert_eq!(loaded, share);
     }
@@ -2969,7 +2943,7 @@ mod tests {
         let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(b"test wire roundtrip").unwrap();
         for share in &shares {
-            let bytes = share.to_bytes();
+            let bytes = share.to_bytes().unwrap();
             let parsed = Share::from_bytes(&bytes).unwrap();
             assert_eq!(&parsed, share);
         }
@@ -2979,7 +2953,7 @@ mod tests {
     fn test_share_wire_format_rejections() {
         let shamir = ShamirShare::builder(5, 3).build().unwrap();
         let shares = shamir.split(b"format test").unwrap();
-        let mut bytes = shares[0].to_bytes();
+        let mut bytes = shares[0].to_bytes().unwrap();
 
         // Truncated bytes
         assert!(matches!(

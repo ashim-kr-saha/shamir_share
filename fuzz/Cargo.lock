@@ -262,6 +262,7 @@ version = "0.3.0"
 dependencies = [
  "rand",
  "rand_chacha",
+ "rand_core",
  "sha2",
  "subtle",
  "thiserror",

@@ -16,7 +16,7 @@ fuzz_target!(|data: &[u8]| {
         assert!(share.threshold <= share.total_shares);
 
         // Re-serializing and de-serializing must be identical (round-trip idempotence)
-        let bytes = share.to_bytes();
+        let bytes = share.to_bytes().expect("Valid share must re-serialize cleanly");
         let re_parsed = Share::from_bytes(&bytes).expect("Valid share must re-serialize cleanly");
         assert_eq!(re_parsed, share);
     }

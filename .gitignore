@@ -2,3 +2,5 @@
 performance_test
 performance_compare
 .DS_Store
+fuzz/corpus/
+fuzz/artifacts/

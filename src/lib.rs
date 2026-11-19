@@ -30,7 +30,7 @@
 //! let shares = scheme.split(secret).unwrap();
 //!
 //! // Serialize shares to canonical bytes
-//! let serialized_shares: Vec<Vec<u8>> = shares.iter().map(|s| s.to_bytes()).collect();
+//! let serialized_shares: Vec<Vec<u8>> = shares.iter().map(|s| s.to_bytes().unwrap()).collect();
 //!
 //! // Deserialize and reconstruct from 3 shares
 //! let loaded_shares: Vec<Share> = serialized_shares[0..3]
@@ -161,6 +161,7 @@ pub use error::{Result, ShamirError};
 pub use finite_field::FiniteField;
 #[cfg(feature = "hsss")]
 pub use hsss::{AccessLevel, HierarchicalShare, Hsss, HsssBuilder};
+pub use rand_core;
 pub use shamir::{
     Dealer, MAX_SHARE_DATA_LEN, SHARE_WIRE_MAGIC, SHARE_WIRE_VERSION, ShamirShare,
     ShamirShareBuilder, Share, ShareView,
@@ -178,6 +179,7 @@ pub mod prelude {
         SHARE_WIRE_VERSION, ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareView,
         SplitMode, Zeroizing,
     };
+    pub use rand_core::Rng;
     #[cfg(feature = "streaming")]
     pub use super::{STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
 }
@@ -200,7 +202,7 @@ mod tests {
         // Serialize all shares to canonical wire format
         let mut serialized = Vec::new();
         for share in &shares {
-            serialized.push(share.to_bytes());
+            serialized.push(share.to_bytes()?);
         }
         assert_eq!(serialized.len(), 5);
 
@@ -239,7 +241,7 @@ mod tests {
         // Serialize and reconstruct
         let mut loaded_shares = Vec::new();
         for share in &shares[0..3] {
-            let bytes = share.to_bytes();
+            let bytes = share.to_bytes()?;
             loaded_shares.push(Share::from_bytes(&bytes)?);
         }
 

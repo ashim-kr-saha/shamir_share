@@ -52,7 +52,7 @@ let secret = b"my secret data";
 let shares = scheme.split(secret).unwrap();
 
 // Serialize shares to canonical bytes (e.g. for transmission or storage)
-let serialized_shares: Vec<Vec<u8>> = shares.iter().map(|s| s.to_bytes()).collect();
+let serialized_shares: Vec<Vec<u8>> = shares.iter().map(|s| s.to_bytes().unwrap()).collect();
 
 // Later, deserialize and reconstruct from any 3 shares
 let loaded_shares: Vec<Share> = serialized_shares[0..3]
@@ -91,7 +91,9 @@ use shamir_share::{ShamirShare, Share};
 use rand_chacha::ChaCha20Rng;
 use rand_chacha::rand_core::SeedableRng;
 
-// In no_std mode, supply any RngCore implementation
+// In no_std mode, supply any Rng (from rand_core) implementation.
+// WARNING: Never use a static or predictable seed in production!
+// Always acquire cryptographic randomness from hardware or secure enclave entropy.
 let mut rng = ChaCha20Rng::from_seed([0x42; 32]);
 let scheme = ShamirShare::builder(5, 3).build().unwrap();
 let secret = b"embedded enclave secret";
@@ -118,6 +120,7 @@ assert_eq!(reconstructed.as_slice(), secret);
 
 - **Information-Theoretic Security**: Any set of fewer than $k$ shares reveals mathematically zero information about the secret.
 - **Constant-Time Execution**: Arithmetic routines are verified branchless to protect against cache and timing attacks.
+- **Active Excess Share Verification**: When more than $k$ shares are provided, all excess shares are actively cross-verified against the reconstructed polynomial in GF(2^8). Any inconsistent or rogue share will cause reconstruction to immediately fail with `IntegrityCheckFailed`.
 - **Corruption Detection vs. Authenticity**: Unkeyed SHA-256 verification detects accidental bit-rot and framing errors. To protect against malicious share holders actively forging shares with known plaintext, configure a 256-bit authentication key with `Config::with_authentication_key`.
 - **Side-Channel Caution with Compression**: When `compress` is enabled, ciphertext length varies with plaintext entropy (CRIME/BREACH style leaks). Do not enable compression for fixed-entropy secrets like cryptographic keys.
 
@@ -138,6 +141,7 @@ cd fuzz
 cargo +nightly fuzz run fuzz_reconstruct
 cargo +nightly fuzz run fuzz_share_from_bytes
 cargo +nightly fuzz run fuzz_reconstruct_stream
+cargo +nightly fuzz run fuzz_hsss
 ```
 
 ## License

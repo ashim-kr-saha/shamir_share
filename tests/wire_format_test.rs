@@ -10,7 +10,7 @@ fn test_wire_format_roundtrip_all_shares() {
 
     let mut encoded = Vec::new();
     for share in &shares {
-        encoded.push(share.to_bytes());
+        encoded.push(share.to_bytes().unwrap());
     }
 
     let mut decoded = Vec::new();
@@ -26,8 +26,8 @@ fn test_wire_format_roundtrip_all_shares() {
 
 #[test]
 fn test_wire_format_framing_details() {
-    let share = Share::new(2, vec![1, 2, 3, 4], 3, 5, true, false);
-    let bytes = share.to_bytes();
+    let share = Share::new(2, vec![1, 2, 3, 4], 3, 5, true, false).unwrap();
+    let bytes = share.to_bytes().unwrap();
 
     // Magic: b"SHS1"
     assert_eq!(&bytes[0..4], b"SHS1");
@@ -50,8 +50,8 @@ fn test_wire_format_framing_details() {
 
 #[test]
 fn test_wire_format_tamper_rejections() {
-    let share = Share::new(1, vec![42; 64], 2, 3, true, false);
-    let bytes = share.to_bytes();
+    let share = Share::new(1, vec![42; 64], 2, 3, true, false).unwrap();
+    let bytes = share.to_bytes().unwrap();
 
     // Valid parses fine
     assert!(Share::from_bytes(&bytes).is_ok());

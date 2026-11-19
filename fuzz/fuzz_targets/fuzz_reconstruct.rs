@@ -50,14 +50,16 @@ fuzz_target!(|data: &[u8]| {
                     offset += 1;
                 }
             }
-            shares.push(Share::new(
+            if let Ok(share) = Share::new(
                 index,
                 share_data,
                 threshold,
                 total_shares,
                 integrity_check,
                 compression,
-            ));
+            ) {
+                shares.push(share);
+            }
         }
 
         let _ = ShamirShare::reconstruct(&shares);
@@ -101,7 +103,9 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
 
-            shares.push(Share::new(index, share_data, th, tot, ic, comp));
+            if let Ok(s) = Share::new(index, share_data, th, tot, ic, comp) {
+                shares.push(s);
+            }
         }
 
         let _ = ShamirShare::reconstruct(&shares);
