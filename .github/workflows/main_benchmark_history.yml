@@ -43,20 +43,30 @@ jobs:
           # Include benchmark target in cache key
           key: benchmark-history-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
 
-      # Run and compare benchmarks, updating the gh-pages branch
-      - name: Run and Compare Benchmarks
-        uses: boa-dev/criterion-compare-action@adfd3a94634fe2041ce5613eb7df09d247555b87 # v3.2.4
+      - name: Run benchmarks
+        run: cargo bench --bench '*' -- --output-format bencher | tee benchmark-output.txt
+
+      - name: Initialize benchmark history branch
+        run: |
+          pages_ref=$(git ls-remote --heads origin gh-pages)
+          if [ -z "$pages_ref" ]; then
+            git switch --orphan gh-pages
+            git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit --allow-empty -m "Initialize benchmark history"
+            git push origin gh-pages
+            git checkout --detach "$GITHUB_SHA"
+            git branch -D gh-pages
+          fi
+
+      - name: Store benchmark history
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
-          # The token is necessary to push to the gh-pages branch
-          token: ${{ secrets.GITHUB_TOKEN }}
-          # Optional: Specify which benchmarks to run (default is all)
-          # benchName: "all"
-          # Optional: Specify the branch to store results (default is gh-pages)
-          # branchName: "gh-pages"
+          tool: cargo
+          output-file-path: benchmark-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
 
       # Optional: Create a commit comment with benchmark summary
       - name: Comment benchmark results on commit
-        if: always()
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
@@ -74,7 +84,7 @@ jobs:
                 benchmarkSummary += `- In-memory operations (split/reconstruct)\n`;
                 benchmarkSummary += `- Streaming operations (split_stream/reconstruct_stream)\n`;
                 benchmarkSummary += `- HSSS operations (hierarchical secret sharing)\n\n`;
-                benchmarkSummary += `📈 [View detailed performance history](https://${context.repo.owner}.github.io/${context.repo.repo}/)`;
+                benchmarkSummary += `📈 [View detailed performance history](https://${context.repo.owner}.github.io/${context.repo.repo}/dev/bench/)`;
               }
             } catch (error) {
               console.log('Could not read benchmark results:', error.message);
@@ -100,5 +110,5 @@ jobs:
           name: benchmark-history-${{ github.sha }}
           path: |
             target/criterion/
-            criterion-compare-output.txt
+            benchmark-output.txt
           retention-days: 90

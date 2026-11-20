@@ -26,7 +26,7 @@ This directory contains the CI/CD workflows for the `shamir_share` project.
 1. **Enable GitHub Pages**: Go to repository Settings → Pages → Select `gh-pages` branch
 2. **Merge a PR**: The regression check will run automatically
 3. **Push to main**: History tracking will start building performance data
-4. **View reports**: Visit `https://<username>.github.io/<repo-name>/`
+4. **View reports**: Visit `https://<username>.github.io/<repo-name>/dev/bench/`
 
 ## 📚 Documentation
 
