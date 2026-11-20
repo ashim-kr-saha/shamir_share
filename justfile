@@ -78,7 +78,7 @@ audit-full:
     cargo package --list --allow-dirty | grep -E '(deny\.toml|\.gitignore|CONTRIBUTING\.md|AUDIT\.md)' && { echo "Package contains excluded files!"; exit 1; } || true
     echo "==> 11/13: cargo audit & cargo deny"
     cargo audit
-    cargo deny check
+    cargo deny --all-features check
     echo "==> 12/13: subtle and fuzz feature assertions"
     cargo tree -e features -i subtle | grep -q 'core_hint_black_box' || { echo "subtle missing core_hint_black_box!"; exit 1; }
     cargo tree --manifest-path fuzz/Cargo.toml -e features -i shamir_share | grep -q 'feature "compress"' || { echo "fuzz crate missing compress feature!"; exit 1; }
@@ -205,7 +205,7 @@ update:
 
 # Run security checks
 security-check: audit security-scan
-    cargo deny check
+    cargo deny --all-features check
 
 # Generate and view documentation with examples
 docs-with-examples: docs

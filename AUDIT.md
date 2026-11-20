@@ -58,7 +58,7 @@ All findings verified `FIXED` via `just audit-full` and `tests/security_audit_pr
 | [F-23](#f-23) | Medium | FIXED | Memory hygiene | `src/lib.rs:94-152`, `src/hsss.rs:58-92` | Fallback drop zeroization across Share, AccessLevel, HierarchicalShare | `tests/security_audit_probes_test.rs` |
 | [F-07](#f-07) | Low | FIXED | Wire format | `src/shamir.rs:258-304` | Zero-length payload shares rejected in wire parser | `tests/security_audit_probes_test.rs` |
 | [F-08](#f-08) | Low | FIXED | API | `src/shamir.rs:91-109` | Share fields private with getters and zeroizing extractors | `tests/audit_v030_hardening_test.rs` |
-| [F-09](#f-09) | Low | FIXED | CI | `.github/workflows/ci.yml` | Added `cargo deny check --all-features` and fuzz manifest verification | `just audit-full` |
+| [F-09](#f-09) | Low | FIXED | CI | `.github/workflows/ci.yml` | Added `cargo deny --all-features check` and fuzz manifest verification | `just audit-full` |
 | [F-10](#f-10) | Low | FIXED | Packaging | `Cargo.toml:13-20` | Excluded `deny.toml`, `.gitignore`, `CONTRIBUTING.md`, `AUDIT.md` from package | `just audit-full` |
 | [F-11](#f-11) | Low | FIXED | Error taxonomy | `src/error.rs:34,55,58,66` | Removed dead `ShareNotFound` variant; cleaned up error taxonomy | `src/error.rs` |
 | [F-12](#f-12) | Low | FIXED | API | `src/config.rs:127,139,145,151,161` | Added `#[must_use]` attributes across builder setters | `cargo clippy` |
@@ -421,7 +421,7 @@ tag/version match and re-runs tests, but also skips audit.
 grep -c "cargo audit\|cargo deny\|miri" .github/workflows/*.yml   # → 0 in all files
 ```
 
-**Fix.** Add `security` (`cargo audit`, `cargo deny check --all-features`), `miri` (`--lib`),
+**Fix.** Add `security` (`cargo audit`, `cargo deny --all-features check`), `miri` (`--lib`),
 `fuzz-smoke` (60 s per target on PRs), `wasm32 test`, and `--locked` everywhere.
 
 ---
@@ -906,7 +906,7 @@ and should not be disturbed by the fixes above.
 
 **CI jobs**
 
-`security` (`cargo audit`, `cargo deny check --all-features`), `miri` (`--lib`, default features),
+`security` (`cargo audit`, `cargo deny --all-features check`), `miri` (`--lib`, default features),
 `fuzz-smoke` (60 s per target on PRs), `wasm32 test`, `--locked` on the whole matrix.
 
 ---
