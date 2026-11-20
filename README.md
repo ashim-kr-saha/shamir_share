@@ -19,7 +19,7 @@ A security-first, high-performance implementation of Shamir's Secret Sharing sch
   - `compress`: Transparent Zstandard chunk compression.
   - `serde`: Optional `serde::Serialize` and `serde::Deserialize` implementations.
   - `zeroize`: Secure memory hygiene clearing sensitive buffers on drop.
-- **Authenticated Shares**: Optional caller-held 256-bit authentication key verifies shares with HMAC-SHA256, protecting against active share tampering and splicing.
+- **Authenticated Shares**: Optional caller-held 256-bit authentication key verifies shares with HMAC-SHA256 across in-memory (`reconstruct_authenticated`), streaming (`reconstruct_stream_authenticated`), and hierarchical (`Hsss::reconstruct_authenticated`) APIs, protecting against active share tampering and splicing.
 - **100% Safe Rust**: `#![forbid(unsafe_code)]` enforced across the entire library core. When the optional `compress` feature is enabled, decompression links to the upstream Zstandard C implementation.
 
 ## Installation
@@ -108,7 +108,7 @@ assert_eq!(reconstructed.as_slice(), secret);
 | Feature | Default | Description |
 |---|:---:|---|
 | `std` | Yes | Standard library integration, OS system entropy (`SysRng`), and I/O error bridging. |
-| `zeroize` | Yes | Hardware-grade memory zeroization on drop for buffers, RNG states, and HMAC keys. |
+| `zeroize` | Yes | Best-effort memory zeroization on drop for buffers, intermediate HMAC states, and keys. |
 | `streaming` | Yes | Chunked streaming I/O (`split_stream` and `reconstruct_stream`). |
 | `hsss` | Yes | Hierarchical secret sharing scheme (role-based access structures). |
 | `refresh` | Yes | Proactive secret sharing (epoch refreshing via zero polynomials). |
@@ -118,10 +118,11 @@ assert_eq!(reconstructed.as_slice(), secret);
 
 ## Security Guarantees & Threat Model
 
-- **Information-Theoretic Security**: Any set of fewer than $k$ shares reveals mathematically zero information about the secret.
-- **Constant-Time Execution**: Arithmetic routines are verified branchless to protect against cache and timing attacks.
+- **Information-Theoretic Security**: Any set of fewer than $k$ shares reveals mathematically zero information about the secret, assuming an honest dealer and uniform cryptographic entropy (enforced via `CryptoRng`).
+- **Constant-Time Execution & Timing Boundaries**: GF($2^8$) arithmetic operations (multiplication and inversion) are verified branchless to protect against cache and timing attacks. Secret length, share count $k$, excess share count $n - k$, error early-returns, and compression are **not** constant-time.
 - **Accidental Corruption vs. Malicious Forgery**: When more than $k$ shares are provided, all excess shares are actively cross-verified in GF($2^8$) against the polynomial formed by the first $k$ shares. Inconsistent or accidentally corrupted excess shares will cause reconstruction to fail with `IntegrityCheckFailed`. However, excess share verification does not identify which share is rogue, nor does it protect against an active adversary possessing $k-1$ shares who crafts a rogue share targeting chosen plaintext.
-- **Corruption Detection vs. Authenticity**: Unkeyed SHA-256 verification detects accidental bit-rot and framing errors. To protect against malicious share holders actively forging shares with known plaintext, configure a 256-bit authentication key with `Config::with_authentication_key` and use `reconstruct_authenticated` (or `reconstruct_from_views_authenticated`) for guaranteed authenticity verification.
+- **Corruption Detection vs. Authenticity**: Unkeyed SHA-256 verification detects accidental bit-rot and framing errors. To protect against malicious share holders actively forging shares with known plaintext, configure a 256-bit authentication key with `Config::with_authentication_key` and use fail-closed authenticated reconstruction APIs (`reconstruct_authenticated`, `reconstruct_stream_authenticated`, or `Hsss::reconstruct_authenticated`).
+- **Memory Hygiene Caveats**: When the `zeroize` feature is enabled, sensitive buffers, keys, and SHA-256 internal compression states are zeroized on drop. However, in safe Rust, compiler register/stack spills, operating system swap, and core dumps cannot be eliminated, and `rand_chacha 0.10` does not implement zeroization.
 - **Side-Channel Caution with Compression**: When `compress` is enabled, ciphertext length varies with plaintext entropy (CRIME/BREACH style leaks). Do not enable compression for fixed-entropy secrets like cryptographic keys.
 
 ## Development & Testing

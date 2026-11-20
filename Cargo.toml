@@ -29,7 +29,7 @@ default = ["std", "zeroize", "streaming", "hsss", "refresh"]
 
 # Environment
 std = ["subtle/std", "thiserror/std", "zeroize?/std", "rand/std", "rand/sys_rng", "rand/thread_rng", "dep:rand"]
-zeroize = ["dep:zeroize"]
+zeroize = ["dep:zeroize", "sha2/zeroize"]
 
 # Modular Features
 streaming = ["std"]

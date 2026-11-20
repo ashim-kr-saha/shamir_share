@@ -131,6 +131,11 @@ impl Config {
     }
 
     /// Sets the processing mode
+    ///
+    /// # Concurrency & Fallback Notice
+    /// If [`SplitMode::Parallel`] is configured but the crate is compiled without the `parallel`
+    /// feature, share generation automatically falls back to sequential execution. When the
+    /// `parallel` feature is active, polynomial evaluation utilizes Rayon's global thread pool.
     pub fn with_mode(mut self, mode: SplitMode) -> Self {
         self.mode = mode;
         self

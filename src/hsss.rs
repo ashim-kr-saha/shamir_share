@@ -63,11 +63,34 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "AccessLevelHelper"))]
 pub struct AccessLevel {
     /// Human-readable name for this access level (e.g., "President", "VP", "Executive")
     name: String,
     /// Number of shares that participants at this level should receive
     shares_count: u8,
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct AccessLevelHelper {
+    name: String,
+    shares_count: u8,
+}
+
+#[cfg(feature = "serde")]
+impl core::convert::TryFrom<AccessLevelHelper> for AccessLevel {
+    type Error = ShamirError;
+
+    fn try_from(helper: AccessLevelHelper) -> core::result::Result<Self, Self::Error> {
+        if helper.name.is_empty() || helper.shares_count == 0 {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        Ok(Self {
+            name: helper.name,
+            shares_count: helper.shares_count,
+        })
+    }
 }
 
 #[cfg(not(feature = "zeroize"))]
@@ -120,11 +143,71 @@ impl AccessLevel {
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(try_from = "HierarchicalShareHelper"))]
 pub struct HierarchicalShare {
     /// Name of the access level this share set belongs to
     level_name: String,
     /// The actual cryptographic shares for this participant
     shares: Vec<Share>,
+}
+
+#[cfg(feature = "serde")]
+fn deserialize_bounded_shares<'de, D>(deserializer: D) -> core::result::Result<Vec<Share>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct BoundedSharesVisitor;
+    impl<'de> serde::de::Visitor<'de> for BoundedSharesVisitor {
+        type Value = Vec<Share>;
+        fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            write!(f, "a sequence of 1..=255 shares")
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> core::result::Result<Self::Value, A::Error> {
+            let cap = seq.size_hint().unwrap_or(0).min(16);
+            let mut buf = Vec::with_capacity(cap);
+            while let Some(share) = seq.next_element::<Share>()? {
+                if buf.len() >= 255 {
+                    return Err(serde::de::Error::custom(
+                        "hierarchical share exceeds maximum allowed shares (255)",
+                    ));
+                }
+                buf.push(share);
+            }
+            if buf.is_empty() {
+                return Err(serde::de::Error::custom(
+                    "hierarchical share shares cannot be empty",
+                ));
+            }
+            Ok(buf)
+        }
+    }
+    deserializer.deserialize_seq(BoundedSharesVisitor)
+}
+
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+struct HierarchicalShareHelper {
+    level_name: String,
+    #[serde(deserialize_with = "deserialize_bounded_shares")]
+    shares: Vec<Share>,
+}
+
+#[cfg(feature = "serde")]
+impl core::convert::TryFrom<HierarchicalShareHelper> for HierarchicalShare {
+    type Error = ShamirError;
+
+    fn try_from(helper: HierarchicalShareHelper) -> core::result::Result<Self, Self::Error> {
+        if helper.level_name.is_empty() || helper.shares.is_empty() || helper.shares.len() > 255 {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        Ok(Self {
+            level_name: helper.level_name,
+            shares: helper.shares,
+        })
+    }
 }
 
 #[cfg(not(feature = "zeroize"))]
@@ -570,7 +653,7 @@ impl Hsss {
     /// Splits a secret into hierarchical shares using a caller-provided random number generator.
     ///
     /// Available in `#![no_std]` mode.
-    pub fn split_secret_with_rng<R: rand_chacha::rand_core::Rng>(
+    pub fn split_secret_with_rng<R: rand_chacha::rand_core::CryptoRng>(
         &self,
         secret: &[u8],
         rng: &mut R,
@@ -699,6 +782,20 @@ impl Hsss {
         // Validate strictly against master scheme parameters
         self.master_scheme
             .reconstruct_from_views_with_scheme(&all_views)
+    }
+
+    /// Reconstructs the original secret from hierarchical shares while requiring a caller-configured authentication key.
+    ///
+    /// Fails closed with [`ShamirError::UnauthenticatedScheme`] if the scheme was constructed without
+    /// an authentication key via [`Config::with_authentication_key`](crate::Config::with_authentication_key).
+    pub fn reconstruct_authenticated(
+        &self,
+        hierarchical_shares: &[HierarchicalShare],
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        if self.master_scheme.config().authentication_key().is_none() {
+            return Err(ShamirError::UnauthenticatedScheme);
+        }
+        self.reconstruct(hierarchical_shares)
     }
 }
 

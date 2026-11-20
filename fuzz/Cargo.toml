@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+serde_json = "1.0"
 shamir_share = { path = "..", features = ["compress", "serde", "parallel"] }
 
 [[bin]]
@@ -32,5 +33,17 @@ doc = false
 [[bin]]
 name = "fuzz_hsss"
 path = "fuzz_targets/fuzz_hsss.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_serde_share"
+path = "fuzz_targets/fuzz_serde_share.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_refresh"
+path = "fuzz_targets/fuzz_refresh.rs"
 test = false
 doc = false

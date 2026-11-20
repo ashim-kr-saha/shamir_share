@@ -20,7 +20,12 @@ proptest! {
             .build()
             .unwrap();
 
-        let shares = scheme.split(&secret).unwrap();
+        let res = scheme.split(&secret);
+        if secret.is_empty() && !integrity {
+            prop_assert!(matches!(res, Err(ShamirError::InvalidConfig(_))));
+            return Ok(());
+        }
+        let shares = res.unwrap();
         prop_assert_eq!(shares.len(), total_shares as usize);
 
         // Serialize and deserialize all shares
@@ -60,11 +65,9 @@ proptest! {
         let data = vec![0x55; data_len];
         let res = Share::new(index, data, threshold, total_shares, true, false);
 
-        let is_valid = index >= 1
-            && index <= total_shares
-            && threshold >= 2
-            && threshold <= total_shares
-            && data_len <= shamir_share::MAX_SHARE_DATA_LEN;
+        let is_valid = (1..=total_shares).contains(&index)
+            && (2..=total_shares).contains(&threshold)
+            && (1..=shamir_share::MAX_SHARE_DATA_LEN).contains(&data_len);
 
         if is_valid {
             prop_assert!(res.is_ok());
