@@ -44,7 +44,9 @@ jobs:
           key: benchmark-history-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run benchmarks
-        run: cargo bench --bench '*' -- --output-format bencher | tee benchmark-output.txt
+        run: |
+          set -o pipefail
+          cargo bench --bench '*' -- --output-format bencher | tee benchmark-output.txt
 
       - name: Initialize benchmark history branch
         run: |
