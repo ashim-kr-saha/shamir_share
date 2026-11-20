@@ -68,13 +68,10 @@ graph TD
 - **Commit Comments**: Adds performance summaries to commit messages
 - **Long-term Artifacts**: Retains benchmark data for 90 days
 
-### The `criterion-compare-action@v3` Magic:
-This specialized action handles the complex workflow of:
-1. Checking out the `gh-pages` branch
-2. Running new benchmarks
-3. Comparing against historical baselines
-4. Generating HTML reports with charts
-5. Committing updated results back to `gh-pages`
+The workflow runs the Criterion benchmarks in bencher output format, then
+`benchmark-action/github-action-benchmark` appends the results and publishes
+the charts to `gh-pages`. The workflow initializes that branch if it does not
+already exist.
 
 ## 🎯 Benefits of This Two-Part System
 
@@ -118,14 +115,14 @@ The system automatically runs all benchmark suites:
 
 Once set up, you can access performance reports at:
 ```
-https://<username>.github.io/<repository-name>/
+https://<username>.github.io/<repository-name>/dev/bench/
 ```
 
 ### Report Features:
 - **Interactive Charts**: Hover for detailed metrics
 - **Commit-by-Commit History**: See performance changes over time
 - **Benchmark Breakdown**: Separate charts for each benchmark suite
-- **Statistical Analysis**: Confidence intervals and regression detection
+- **Benchmark Measurements**: Timing estimates and ranges from Criterion
 
 ## 🔧 Customization Options
 
