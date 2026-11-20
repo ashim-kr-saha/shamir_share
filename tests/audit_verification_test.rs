@@ -15,6 +15,7 @@
 #![cfg(feature = "std")]
 
 use shamir_share::{Config, FiniteField, ShamirError, ShamirShare, Share};
+#[cfg(feature = "streaming")]
 use std::io::{Cursor, Error, ErrorKind, Read};
 
 // ============================================================================
@@ -436,11 +437,13 @@ fn test_f11_hsss_serde_invariants() {
 // 8. Streaming Edge Cases: Interrupted Reader Adapter
 // ============================================================================
 
+#[cfg(feature = "streaming")]
 struct InterruptedReader<R> {
     inner: R,
     toggle: bool,
 }
 
+#[cfg(feature = "streaming")]
 impl<R: Read> Read for InterruptedReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.toggle = !self.toggle;
