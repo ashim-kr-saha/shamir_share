@@ -63,7 +63,7 @@ jobs:
         run: cargo test --locked ${{ matrix.feature-set.flags }}
 
   no-std-check:
-    name: No-Std (Wasm32) Check
+    name: No-Std (Wasm32 & Embedded) Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -71,10 +71,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust toolchain with wasm32 target
+      - name: Install Rust toolchain with targets
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32-unknown-unknown, thumbv7em-none-eabihf
 
       - name: Check wasm32 compilation without default features
         run: cargo check --locked --target wasm32-unknown-unknown --no-default-features
@@ -84,6 +84,12 @@ jobs:
 
       - name: Check wasm32 with serde
         run: cargo check --locked --target wasm32-unknown-unknown --no-default-features --features "serde"
+
+      - name: Check thumbv7em compilation without default features
+        run: cargo check --locked --target thumbv7em-none-eabihf --no-default-features
+
+      - name: Check thumbv7em with hsss and refresh
+        run: cargo check --locked --target thumbv7em-none-eabihf --no-default-features --features "hsss,refresh"
 
   msrv-check:
     name: MSRV Check (1.88.0)
@@ -104,7 +110,7 @@ jobs:
         run: cargo check --locked --all-targets --all-features
 
   doc-tests:
-    name: Documentation Tests
+    name: Documentation Tests & Doc Build
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -120,6 +126,9 @@ jobs:
 
       - name: Run doc tests
         run: cargo test --locked --doc --all-features
+
+      - name: Check rustdoc builds with zero warnings
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --locked --all-features --no-deps
 
   lints:
     name: Lints and Formatting
@@ -172,7 +181,7 @@ jobs:
         run: cargo audit
 
       - name: Run cargo deny check
-        run: cargo deny check --all-features
+        run: cargo deny --all-features check
 
   miri:
     name: Miri Undefined Behavior Check

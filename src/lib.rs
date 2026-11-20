@@ -76,6 +76,16 @@ extern crate alloc;
 #[cfg(feature = "zeroize")]
 pub use zeroize::Zeroizing;
 
+/// Best-effort fallback memory-clearing trait used when the `zeroize` feature is disabled.
+///
+/// # Security Caveat
+/// Because `shamir_share` enforces `#![forbid(unsafe_code)]`, this fallback cannot invoke
+/// compiler-intrinsic volatile write operations (`core::ptr::write_volatile`). Instead, it
+/// writes zeros with `core::hint::black_box` and applies `core::sync::atomic::compiler_fence(SeqCst)`.
+/// While this inhibits common compiler dead-store optimizations, the Rust abstract machine does not
+/// formally guarantee that writes through non-volatile references survive subsequent memory deallocation.
+/// In security-sensitive or hostile memory-disclosure deployments, always enable the crate's `zeroize`
+/// feature.
 #[cfg(not(feature = "zeroize"))]
 pub trait ZeroizeFallback {
     fn zeroize_fallback(&mut self);
@@ -187,7 +197,7 @@ pub use error::{Result, ShamirError};
 pub use finite_field::FiniteField;
 #[cfg(feature = "hsss")]
 pub use hsss::{AccessLevel, HierarchicalShare, Hsss, HsssBuilder};
-pub use rand_core;
+pub use rand_core::{self, CryptoRng};
 pub use shamir::{
     Dealer, MAX_SHARE_DATA_LEN, SHARE_WIRE_MAGIC, SHARE_WIRE_VERSION, ShamirShare,
     ShamirShareBuilder, Share, ShareView,
@@ -207,7 +217,7 @@ pub mod prelude {
     };
     #[cfg(feature = "streaming")]
     pub use super::{MAX_STREAM_CHUNK_SIZE, STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
-    pub use rand_core::Rng;
+    pub use rand_core::{CryptoRng, Rng};
 }
 
 #[cfg(all(test, feature = "std"))]

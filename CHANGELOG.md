@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.3.0] - 2026-11-07
+## [0.3.0] - 2026-11-21
 
 ### Breaking Changes
 
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`#![no_std]` + `alloc` Supported**:
   - The crate is `#![no_std]` compatible out-of-the-box when disabling default features (`default-features = false`).
   - Convenience methods that rely on system entropy (`ShamirShare::split`, `ShamirShare::try_dealer`, `Hsss::split_secret`, `ShamirShare::refresh_shares`, `ShamirShare::split_stream`) require the `"std"` feature.
-  - In `#![no_std]` environments (embedded, WASM), use `split_with_rng`, `try_dealer_with_rng`, `split_secret_with_rng`, and `refresh_shares_with_rng` with any `rand_core::Rng`.
+  - In `#![no_std]` environments (embedded, WASM), use `split_with_rng`, `try_dealer_with_rng`, `split_secret_with_rng`, and `refresh_shares_with_rng` with any `rand_core::CryptoRng`.
 - **Fallible `Share::to_bytes()` and `Share::new()`**:
   - `Share::to_bytes()` now returns `Result<Zeroizing<Vec<u8>>, ShamirError>`, eliminating all panic paths, returning zeroized buffers, and validating share invariants.
   - `Share::new()` now returns `Result<Self, ShamirError>`, validating indices, thresholds, compression settings, and enforcing maximum payload size bounds.
@@ -26,7 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added public getter methods (`index()`, `threshold()`, `total_shares()`, `integrity_check()`, `compression()`, `data()`, `level_name()`, `shares()`, `name()`, `shares_count()`).
   - Added zero-copy consuming methods `Share::into_data()` (returning `Zeroizing<Vec<u8>>`) and `HierarchicalShare::into_shares()`.
 - **Explicit Authenticated Reconstruction APIs**:
-  - Added `reconstruct_authenticated` and `reconstruct_from_views_authenticated` ensuring that schemes configured without an explicit caller-held HMAC authentication key fail with `ShamirError::UnauthenticatedScheme`.
+  - Added `reconstruct_authenticated`, `reconstruct_from_views_authenticated`, `ShamirShare::reconstruct_stream_authenticated`, and `Hsss::reconstruct_authenticated` ensuring that schemes configured without an explicit caller-held HMAC authentication key fail closed with `ShamirError::UnauthenticatedScheme`.
+- **CSPRNG Trait Enforcement (`rand_core::CryptoRng`)**:
+  - All `*_with_rng` entry points (`split_with_rng`, `try_dealer_with_rng`, `split_secret_with_rng`, `generate_refresh_deltas_with_rng`, `refresh_shares_with_rng`) now bound on `R: CryptoRng` instead of general `Rng`, preventing non-cryptographic PRNGs from compiling silently. Re-exported `CryptoRng` in crate root and prelude.
+- **Empty-Secret Validation**:
+  - Splitting an empty secret (`b""`) when `integrity_check = false` is now rejected with `ShamirError::InvalidConfig`, preventing the generation of 0-byte shares that break wire serialization and refresh invariants.
+- **Proactive Refresh $k == n$ Integrity Verification & Memory Hygiene**:
+  - Refreshing in $k == n$ schemes verifies the cryptographic integrity digest across active shares before mutating share data, failing closed with `ShamirError::IntegrityCheckFailed` on corruption or truncated shares. Intermediate reconstructed buffers are strictly wrapped in `Zeroizing`.
+- **Bounded Serde Deserialization (DoS Protection)**:
+  - `Share` and `HierarchicalShare` implement bounded element-by-element deserialization (`deserialize_seq`), capping allocations and rejecting inputs exceeding limits (64 MiB payload cap for `Share`, 255 share cap for `HierarchicalShare`).
 - **Structured Error Hierarchy**:
   - Removed dead `ShareNotFound(u8)` error variant.
   - Added structured error variants: `AllocationFailed`, `ChunkIndexOverflow`, `ChunkLengthOverflow`, and `UnauthenticatedScheme`.
@@ -35,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Minimum Supported Rust Version (MSRV)**:
   - Bumped MSRV to Rust 1.88 due to dependency requirements (`sha2@0.11.1`).
 - **Re-exported `rand_core`**:
-  - Re-exported `rand_core` and `rand_core::Rng` in root and `prelude` to ensure seamless `#![no_std]` integration without version conflicts.
+  - Re-exported `rand_core` and `rand_core::CryptoRng` in root and `prelude` to ensure seamless `#![no_std]` integration without version conflicts.
 - **Modular Feature Flags**:
   - `default = ["std", "zeroize", "streaming", "hsss", "refresh"]`
   - High-level capabilities are now individually toggled via Cargo features:
