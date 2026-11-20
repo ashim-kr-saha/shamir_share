@@ -2,7 +2,7 @@ use shamir_share::hsss::Hsss;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create an HSSS scheme with master threshold of 5
-    let mut hsss = Hsss::builder(5)
+    let hsss = Hsss::builder(5)
         .add_level("President", 5) // President gets 5 shares (can reconstruct alone)
         .add_level("VP", 3) // VP gets 3 shares
         .add_level("Executive", 2) // Executive gets 2 shares

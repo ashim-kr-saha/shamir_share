@@ -23,7 +23,7 @@ fuzz_target!(|data: &[u8]| {
         builder = builder.add_level(&name, shares);
     }
 
-    let Ok(mut hsss) = builder.build() else {
+    let Ok(hsss) = builder.build() else {
         return;
     };
 

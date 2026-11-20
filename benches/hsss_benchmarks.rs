@@ -27,7 +27,7 @@ fn bench_hsss_split_simple(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     // Create a simple HSSS scheme: k=5, 3 levels
-                    let mut hsss = Hsss::builder(5)
+                    let hsss = Hsss::builder(5)
                         .add_level("President", 5)
                         .add_level("VP", 3)
                         .add_level("Executive", 2)
@@ -60,7 +60,7 @@ fn bench_hsss_split_complex(c: &mut Criterion) {
             |b, _| {
                 b.iter(|| {
                     // Create a complex HSSS scheme: k=10, 10 levels
-                    let mut hsss = Hsss::builder(10)
+                    let hsss = Hsss::builder(10)
                         .add_level("CEO", 10)
                         .add_level("CTO", 8)
                         .add_level("CFO", 8)
@@ -95,7 +95,7 @@ fn bench_hsss_reconstruct_simple(c: &mut Criterion) {
         let data = create_mock_data(size);
 
         // Pre-generate hierarchical shares for reconstruction benchmarks
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .add_level("President", 5)
             .add_level("VP", 3)
             .add_level("Executive", 2)
@@ -132,7 +132,7 @@ fn bench_hsss_reconstruct_complex(c: &mut Criterion) {
         let data = create_mock_data(size);
 
         // Pre-generate hierarchical shares for reconstruction benchmarks
-        let mut hsss = Hsss::builder(10)
+        let hsss = Hsss::builder(10)
             .add_level("CEO", 10)
             .add_level("CTO", 8)
             .add_level("CFO", 8)
@@ -176,7 +176,7 @@ fn bench_hsss_reconstruct_collaboration(c: &mut Criterion) {
     let data = create_mock_data(size);
 
     // Pre-generate hierarchical shares
-    let mut hsss = Hsss::builder(5)
+    let hsss = Hsss::builder(5)
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Executive", 2)
@@ -245,7 +245,7 @@ fn bench_hsss_vs_shamir_comparison(c: &mut Criterion) {
     group.bench_function("hsss_workflow_1KB", |b| {
         b.iter(|| {
             // Create HSSS scheme with equivalent complexity
-            let mut hsss = Hsss::builder(3)
+            let hsss = Hsss::builder(3)
                 .add_level("Admin", 3)
                 .add_level("User", 2)
                 .build()
@@ -318,7 +318,7 @@ fn bench_hsss_split_large_secrets(c: &mut Criterion) {
     group.bench_function("complex_hierarchy_100KB", |b| {
         b.iter(|| {
             // Create a complex HSSS scheme: k=10, 6 levels with varying share counts
-            let mut hsss = Hsss::builder(10)
+            let hsss = Hsss::builder(10)
                 .add_level("CEO", 10)
                 .add_level("CTO", 7)
                 .add_level("VP", 5)

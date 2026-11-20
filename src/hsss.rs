@@ -7,12 +7,12 @@
 //!
 //! # Concept
 //!
-//! The HSSS implementation uses a single, powerful "master" scheme (k_master, n_master) and
+//! The HSSS implementation uses a single "master" scheme (k_master, n_master) and
 //! distributes different numbers of shares to participants based on their role. For example,
-//! with a master scheme of (k=5, n=50):
-//! - A President might get 5 shares (and can reconstruct alone)
-//! - A VP might get 3 shares
-//! - An Executive might get 2 shares
+//! with a master scheme of (k=5, n=10):
+//! - A President gets 5 shares (and can reconstruct alone)
+//! - A VP gets 3 shares
+//! - An Executive gets 2 shares
 //!
 //! A combination like a VP (3 shares) and an Executive (2 shares) would meet the threshold of 5.
 //!
@@ -518,7 +518,7 @@ impl Hsss {
     ///
     /// Available in `#![no_std]` mode.
     pub fn split_secret_with_rng<R: rand_chacha::rand_core::Rng>(
-        &mut self,
+        &self,
         secret: &[u8],
         rng: &mut R,
     ) -> Result<Vec<HierarchicalShare>> {
@@ -534,7 +534,7 @@ impl Hsss {
     /// - Constant-time operations prevent side-channel attacks
     /// - Each share reveals no information about the secret without meeting the threshold
     #[cfg(feature = "std")]
-    pub fn split_secret(&mut self, secret: &[u8]) -> Result<Vec<HierarchicalShare>> {
+    pub fn split_secret(&self, secret: &[u8]) -> Result<Vec<HierarchicalShare>> {
         let all_master_shares = self.master_scheme.split(secret)?;
         self.distribute_shares(all_master_shares)
     }
@@ -573,9 +573,11 @@ impl Hsss {
     ///
     /// # Example
     /// ```
+    /// # #[cfg(feature = "std")]
+    /// # {
     /// use shamir_share::hsss::Hsss;
     ///
-    /// let mut hsss = Hsss::builder(5)
+    /// let hsss = Hsss::builder(5)
     ///     .add_level("President", 5)
     ///     .add_level("VP", 3)
     ///     .add_level("Executive", 2)
@@ -592,6 +594,7 @@ impl Hsss {
     /// // VP + Executive can reconstruct together (3 + 2 = 5 shares >= threshold of 5)
     /// let reconstructed = hsss.reconstruct(&hierarchical_shares[1..3]).unwrap();
     /// assert_eq!(reconstructed.as_slice(), secret);
+    /// # }
     /// ```
     ///
     /// # Security
@@ -850,7 +853,7 @@ mod tests {
 
     #[test]
     fn test_split_secret_basic() {
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .add_level("President", 5)
             .add_level("VP", 3)
             .add_level("Executive", 2)
@@ -887,7 +890,7 @@ mod tests {
 
     #[test]
     fn test_reconstruct_president_alone() {
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .add_level("President", 5)
             .add_level("VP", 3)
             .add_level("Executive", 2)
@@ -904,7 +907,7 @@ mod tests {
 
     #[test]
     fn test_reconstruct_vp_and_executive() {
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .add_level("President", 5)
             .add_level("VP", 3)
             .add_level("Executive", 2)
@@ -921,7 +924,7 @@ mod tests {
 
     #[test]
     fn test_reconstruct_all_levels() {
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .add_level("President", 5)
             .add_level("VP", 3)
             .add_level("Executive", 2)
@@ -938,7 +941,7 @@ mod tests {
 
     #[test]
     fn test_reconstruct_insufficient_shares() {
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .add_level("President", 5)
             .add_level("VP", 3)
             .add_level("Executive", 2)
@@ -965,7 +968,7 @@ mod tests {
 
     #[test]
     fn test_split_secret_single_level() {
-        let mut hsss = Hsss::builder(3).add_level("Admin", 5).build().unwrap();
+        let hsss = Hsss::builder(3).add_level("Admin", 5).build().unwrap();
 
         let secret = b"admin secret";
         let hierarchical_shares = hsss.split_secret(secret).unwrap();
@@ -981,7 +984,7 @@ mod tests {
 
     #[test]
     fn test_split_secret_empty_secret() {
-        let mut hsss = Hsss::builder(2)
+        let hsss = Hsss::builder(2)
             .add_level("Level1", 3)
             .add_level("Level2", 2)
             .build()
@@ -999,7 +1002,7 @@ mod tests {
 
     #[test]
     fn test_split_secret_large_secret() {
-        let mut hsss = Hsss::builder(10)
+        let hsss = Hsss::builder(10)
             .add_level("CEO", 10)
             .add_level("CTO", 7)
             .add_level("Manager", 5)
@@ -1028,7 +1031,7 @@ mod tests {
 
     #[test]
     fn test_split_secret_different_combinations() {
-        let mut hsss = Hsss::builder(7)
+        let hsss = Hsss::builder(7)
             .add_level("Level1", 7)
             .add_level("Level2", 4)
             .add_level("Level3", 3)
@@ -1074,7 +1077,7 @@ mod tests {
 
     #[test]
     fn test_share_indices_are_unique() {
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .add_level("Level1", 3)
             .add_level("Level2", 4)
             .add_level("Level3", 2)
@@ -1114,7 +1117,7 @@ mod tests {
 
         // Create HSSS with integrity check disabled
         let config = Config::new().with_integrity_check(false);
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .with_config(config)
             .add_level("Admin", 6)
             .add_level("User", 4)
@@ -1139,7 +1142,7 @@ mod tests {
     #[test]
     fn test_hsss_integration_example() {
         // This test demonstrates the full HSSS workflow as described in the prompt
-        let mut hsss = Hsss::builder(5)
+        let hsss = Hsss::builder(5)
             .add_level("President", 5) // President gets 5 shares (can reconstruct alone)
             .add_level("VP", 3) // VP gets 3 shares
             .add_level("Executive", 2) // Executive gets 2 shares

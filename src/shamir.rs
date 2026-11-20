@@ -141,6 +141,9 @@ impl core::convert::TryFrom<ShareHelper> for Share {
         {
             return Err(ShamirError::InvalidShareFormat);
         }
+        if h.compression && !h.integrity_check {
+            return Err(ShamirError::InvalidShareFormat);
+        }
         if h.data.len() > MAX_SHARE_DATA_LEN {
             return Err(ShamirError::InvalidShareFormat);
         }
@@ -195,6 +198,9 @@ impl Share {
         if index == 0 || index > total_shares || threshold < 2 || threshold > total_shares {
             return Err(ShamirError::InvalidShareFormat);
         }
+        if compression && !integrity_check {
+            return Err(ShamirError::InvalidShareFormat);
+        }
         if data.len() > MAX_SHARE_DATA_LEN {
             return Err(ShamirError::InvalidShareFormat);
         }
@@ -213,7 +219,19 @@ impl Share {
     /// Framing (version 3):
     /// `[4-byte Magic b"SHS1"][1-byte Version 3][1-byte Flags][1-byte Index][1-byte Threshold][1-byte TotalShares][4-byte DataLen (LE)][N-byte Share Data]`
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        if self.index == 0 || self.index > self.total_shares {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        if self.threshold < 2 || self.threshold > self.total_shares {
+            return Err(ShamirError::InvalidShareFormat);
+        }
+        if self.compression && !self.integrity_check {
+            return Err(ShamirError::InvalidShareFormat);
+        }
         let data_len = self.data.len();
+        if data_len > MAX_SHARE_DATA_LEN {
+            return Err(ShamirError::InvalidShareFormat);
+        }
         let len_u32 = u32::try_from(data_len).map_err(|_| ShamirError::InvalidShareFormat)?;
         let mut bytes = Vec::with_capacity(13 + data_len);
         bytes.extend_from_slice(SHARE_WIRE_MAGIC);
@@ -256,6 +274,9 @@ impl Share {
         }
         let integrity_check = (flags & 1) != 0;
         let compression = (flags & 2) != 0;
+        if compression && !integrity_check {
+            return Err(ShamirError::InvalidShareFormat);
+        }
 
         let index = bytes[6];
         let threshold = bytes[7];
@@ -301,16 +322,25 @@ impl Share {
     /// secret shares into a central process.
     ///
     /// # Security
-    /// Verifies that the delta share's index matches this share's index to prevent
-    /// index confusion attacks.
+    /// Verifies that the delta share's index and scheme metadata match this share's
+    /// metadata to prevent index confusion and cross-scheme contamination attacks.
     ///
     /// # Errors
     /// Returns [`ShamirError::InvalidShareIndex`] if `self.index != delta.index`.
+    /// Returns [`ShamirError::InvalidShareFormat`] if threshold, total shares, integrity check,
+    /// or compression settings do not match.
     /// Returns [`ShamirError::InconsistentShareLength`] if `delta.data.len() != self.data.len()`.
     #[cfg(feature = "refresh")]
     pub fn apply_refresh_delta(&mut self, delta: &Share) -> Result<()> {
         if self.index != delta.index {
             return Err(ShamirError::InvalidShareIndex(delta.index));
+        }
+        if self.threshold != delta.threshold
+            || self.total_shares != delta.total_shares
+            || self.integrity_check != delta.integrity_check
+            || self.compression != delta.compression
+        {
+            return Err(ShamirError::InvalidShareFormat);
         }
         if delta.data.len() != self.data.len() {
             return Err(ShamirError::InconsistentShareLength);
@@ -988,8 +1018,8 @@ impl ShamirShare {
     /// integrity verification using constant-time hash comparison to detect accidental bit-rot
     /// and tampering if the shares were created with integrity checking enabled.
     ///
-    /// Note that if more than `threshold` shares are provided, only the first `threshold` shares
-    /// in the slice are evaluated during interpolation and validation.
+    /// If more than `threshold` shares are provided, the polynomial is interpolated from the
+    /// first `threshold` shares and every excess share is verified for consistency against it.
     ///
     /// # Arguments
     /// * `shares` - Slice of shares to use for reconstruction
@@ -1042,8 +1072,8 @@ impl ShamirShare {
     /// This method performs identical validation and reconstruction as [`reconstruct`](Self::reconstruct),
     /// but operates on borrowed slice views to avoid memory allocations and deep cloning.
     ///
-    /// Note that if more than `threshold` views are provided, only the first `threshold` views
-    /// in the slice are evaluated during interpolation and validation.
+    /// If more than `threshold` views are provided, the polynomial is interpolated from the
+    /// first `threshold` views and every excess view is verified for consistency against it.
     ///
     /// # Arguments
     /// * `views` - Slice of borrowed share views
@@ -1609,7 +1639,9 @@ impl ShamirShare {
             }
         }
 
-        let stream_id: [u8; 16] = headers[0][8..24].try_into().unwrap();
+        let stream_id: [u8; 16] = headers[0][8..24]
+            .try_into()
+            .map_err(|_| ShamirError::InvalidShareFormat)?;
         let first_flags = headers[0][24];
         if (first_flags & !0b11) != 0 {
             return Err(ShamirError::InvalidShareFormat);

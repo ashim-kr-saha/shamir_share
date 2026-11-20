@@ -8,7 +8,7 @@ fn main() {
     println!("Testing HSSS performance with 10KB secret...");
 
     // Create a complex HSSS scheme
-    let mut hsss = Hsss::builder(10)
+    let hsss = Hsss::builder(10)
         .add_level("CEO", 10)
         .add_level("CTO", 7)
         .add_level("VP", 5)

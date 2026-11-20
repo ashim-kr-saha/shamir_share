@@ -179,9 +179,9 @@ pub mod prelude {
         SHARE_WIRE_VERSION, ShamirError, ShamirShare, ShamirShareBuilder, Share, ShareView,
         SplitMode, Zeroizing,
     };
-    pub use rand_core::Rng;
     #[cfg(feature = "streaming")]
     pub use super::{STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
+    pub use rand_core::Rng;
 }
 
 #[cfg(all(test, feature = "std"))]

@@ -324,7 +324,7 @@ fn test_mas07_hsss_duplicate_level_names_and_index_binding() {
     assert!(matches!(res, Err(ShamirError::InvalidConfig(_))));
 
     // Index range binding: share with index outside assigned range rejected
-    let mut hsss = Hsss::builder(5)
+    let hsss = Hsss::builder(5)
         .add_level("Level1", 3) // range 1..=3
         .add_level("Level2", 2) // range 4..=5
         .build()

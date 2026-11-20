@@ -316,3 +316,50 @@ fn test_refresh_with_index_out_of_bounds_errors() {
     let result = shamir.refresh_shares(&shares);
     assert!(matches!(result, Err(ShamirError::InvalidShareIndex(4))));
 }
+
+#[test]
+fn test_apply_refresh_delta_rejects_mismatched_metadata() {
+    use shamir_share::Share;
+
+    let mut base_share = Share::new(1, vec![0x42; 32], 2, 3, true, false).unwrap();
+
+    // Mismatched threshold
+    let delta_bad_threshold = Share::new(1, vec![0x11; 32], 3, 3, true, false).unwrap();
+    assert!(matches!(
+        base_share.apply_refresh_delta(&delta_bad_threshold),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Mismatched total_shares
+    let delta_bad_total = Share::new(1, vec![0x11; 32], 2, 5, true, false).unwrap();
+    assert!(matches!(
+        base_share.apply_refresh_delta(&delta_bad_total),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Mismatched integrity_check
+    let delta_bad_integrity = Share::new(1, vec![0x11; 32], 2, 3, false, false).unwrap();
+    assert!(matches!(
+        base_share.apply_refresh_delta(&delta_bad_integrity),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Mismatched index
+    let delta_bad_index = Share::new(2, vec![0x11; 32], 2, 3, true, false).unwrap();
+    assert!(matches!(
+        base_share.apply_refresh_delta(&delta_bad_index),
+        Err(ShamirError::InvalidShareIndex(2))
+    ));
+
+    // Mismatched data length
+    let delta_bad_len = Share::new(1, vec![0x11; 16], 2, 3, true, false).unwrap();
+    assert!(matches!(
+        base_share.apply_refresh_delta(&delta_bad_len),
+        Err(ShamirError::InconsistentShareLength)
+    ));
+
+    // Matching parameters succeed
+    let delta_matching = Share::new(1, vec![0x11; 32], 2, 3, true, false).unwrap();
+    assert!(base_share.apply_refresh_delta(&delta_matching).is_ok());
+    assert_eq!(base_share.data[0], 0x42 ^ 0x11);
+}

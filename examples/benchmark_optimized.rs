@@ -19,7 +19,7 @@ fn main() {
         let mut total_reconstruct_time = 0u128;
 
         for _ in 0..iterations {
-            let mut hsss = Hsss::builder(5)
+            let hsss = Hsss::builder(5)
                 .add_level("President", 5)
                 .add_level("VP", 3)
                 .add_level("Executive", 2)
@@ -60,7 +60,7 @@ fn main() {
     let mut total_reconstruct_time = 0u128;
 
     for _ in 0..iterations {
-        let mut hsss = Hsss::builder(10)
+        let hsss = Hsss::builder(10)
             .add_level("CEO", 10)
             .add_level("CTO", 8)
             .add_level("CFO", 8)

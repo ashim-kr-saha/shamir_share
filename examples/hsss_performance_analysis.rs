@@ -86,7 +86,7 @@ where
 
     for _ in 0..iterations {
         // Test split performance
-        let mut hsss = create_hsss(threshold);
+        let hsss = create_hsss(threshold);
         let start = Instant::now();
         let hierarchical_shares = hsss.split_secret(data).unwrap();
         total_split_time += start.elapsed().as_nanos();

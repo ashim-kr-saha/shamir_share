@@ -6,7 +6,7 @@ use shamir_share::{ShamirError, ShamirShare};
 #[test]
 fn test_president_can_reconstruct_alone() {
     // Setup: Create HSSS scheme with master threshold of 5
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Executive", 2)
@@ -31,7 +31,7 @@ fn test_president_can_reconstruct_alone() {
 #[test]
 fn test_vp_and_executive_can_reconstruct() {
     // Setup: Create HSSS scheme with master threshold of 5
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Executive", 2)
@@ -60,7 +60,7 @@ fn test_vp_and_executive_can_reconstruct() {
 #[test]
 fn test_two_vps_can_reconstruct() {
     // Setup: Create HSSS scheme with multiple VPs
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP1", 3)
         .add_level("VP2", 3)
@@ -89,7 +89,7 @@ fn test_two_vps_can_reconstruct() {
 #[test]
 fn test_vp_alone_cannot_reconstruct() {
     // Setup: Create HSSS scheme with master threshold of 5
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Executive", 2)
@@ -123,7 +123,7 @@ fn test_vp_alone_cannot_reconstruct() {
 #[test]
 fn test_three_contractors_cannot_reconstruct() {
     // Setup: Create HSSS scheme with 3 contractors, each with 1 share
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Contractor1", 1)
@@ -161,7 +161,7 @@ fn test_three_contractors_cannot_reconstruct() {
 #[test]
 fn test_executive_and_contractors_cannot_reconstruct() {
     // Additional test: Executive (2) + 2 Contractors (1 each) = 4 shares < threshold of 5
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Executive", 2)
@@ -192,7 +192,7 @@ fn test_executive_and_contractors_cannot_reconstruct() {
 #[test]
 fn test_vp_executive_and_contractor_can_reconstruct() {
     // Additional test: VP (3) + Executive (2) + Contractor (1) = 6 shares >= threshold of 5
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Executive", 2)
@@ -221,7 +221,7 @@ fn test_vp_executive_and_contractor_can_reconstruct() {
 #[test]
 fn test_all_levels_can_reconstruct() {
     // Test: All levels together should definitely work
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Executive", 2)
@@ -240,7 +240,7 @@ fn test_all_levels_can_reconstruct() {
 #[test]
 fn test_edge_case_exact_threshold() {
     // Test with a scheme where we need exactly the threshold
-    let mut hsss = Hsss::builder(3) // Master threshold of 3
+    let hsss = Hsss::builder(3) // Master threshold of 3
         .add_level("Manager", 3)
         .add_level("Employee1", 1)
         .add_level("Employee2", 1)
@@ -283,7 +283,7 @@ fn test_edge_case_exact_threshold() {
 #[test]
 fn test_complex_hierarchy() {
     // Test a more complex hierarchy with different threshold requirements
-    let mut hsss = Hsss::builder(7) // Master threshold of 7
+    let hsss = Hsss::builder(7) // Master threshold of 7
         .add_level("CEO", 7) // CEO can reconstruct alone
         .add_level("CTO", 4) // CTO needs help
         .add_level("Manager1", 3) // Manager needs help
@@ -354,7 +354,7 @@ fn test_complex_hierarchy() {
 #[test]
 fn test_share_properties_consistency() {
     // Test that all shares have consistent properties regardless of their hierarchical level
-    let mut hsss = Hsss::builder(5) // Master threshold of 5
+    let hsss = Hsss::builder(5) // Master threshold of 5
         .add_level("President", 5)
         .add_level("VP", 3)
         .add_level("Executive", 2)
@@ -400,4 +400,23 @@ fn test_share_properties_consistency() {
     for (i, &index) in all_indices.iter().enumerate() {
         assert_eq!(index, (i + 1) as u8);
     }
+}
+
+#[test]
+fn test_hsss_split_secret_with_immutable_reference() {
+    let hsss = Hsss::builder(3)
+        .add_level("Admin", 2)
+        .add_level("User", 1)
+        .build()
+        .unwrap();
+
+    let secret = b"immutable reference test";
+    // Can call split_secret through &hsss without mutability
+    let shares1 = hsss.split_secret(secret).unwrap();
+    let shares2 = hsss.split_secret(secret).unwrap();
+
+    let rec1 = hsss.reconstruct(&shares1).unwrap();
+    let rec2 = hsss.reconstruct(&shares2).unwrap();
+    assert_eq!(rec1.as_slice(), secret);
+    assert_eq!(rec2.as_slice(), secret);
 }

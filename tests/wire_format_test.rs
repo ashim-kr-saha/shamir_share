@@ -134,3 +134,65 @@ fn test_wire_format_tamper_rejections() {
         Err(ShamirError::InvalidShareFormat)
     ));
 }
+
+#[test]
+fn test_to_bytes_validates_invariants() {
+    let mut bad_share = Share::new(1, vec![1, 2, 3], 2, 3, true, false).unwrap();
+
+    // Invalid index 0
+    bad_share.index = 0;
+    assert!(matches!(
+        bad_share.to_bytes(),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Index > total_shares
+    bad_share.index = 4;
+    assert!(matches!(
+        bad_share.to_bytes(),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Restore index, invalidate threshold (< 2)
+    bad_share.index = 1;
+    bad_share.threshold = 1;
+    assert!(matches!(
+        bad_share.to_bytes(),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Threshold > total_shares
+    bad_share.threshold = 4;
+    assert!(matches!(
+        bad_share.to_bytes(),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // Invalidate compression without integrity
+    bad_share.threshold = 2;
+    bad_share.integrity_check = false;
+    bad_share.compression = true;
+    assert!(matches!(
+        bad_share.to_bytes(),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+}
+
+#[test]
+fn test_compression_without_integrity_rejected_in_share_new_and_from_bytes() {
+    // Share::new rejects compression: true, integrity_check: false
+    assert!(matches!(
+        Share::new(1, vec![1, 2, 3], 2, 3, false, true),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+
+    // from_bytes rejects flags = 2 (compression without integrity)
+    let valid_share = Share::new(1, vec![1, 2, 3], 2, 3, true, false).unwrap();
+    let mut raw_bytes = valid_share.to_bytes().unwrap();
+    raw_bytes[5] = 2; // flags: compression=true, integrity=false
+    assert!(matches!(
+        Share::from_bytes(&raw_bytes),
+        Err(ShamirError::InvalidShareFormat)
+    ));
+}
+

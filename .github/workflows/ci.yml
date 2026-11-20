@@ -35,6 +35,8 @@ jobs:
             flags: "--no-default-features --features std,streaming"
           - name: hsss-only
             flags: "--no-default-features --features std,hsss"
+          - name: hsss-no-std
+            flags: "--no-default-features --features hsss"
           - name: refresh-only
             flags: "--no-default-features --features std,refresh"
           - name: parallel-only

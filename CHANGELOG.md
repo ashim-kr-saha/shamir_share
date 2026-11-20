@@ -19,8 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Convenience methods that rely on system entropy (`ShamirShare::split`, `ShamirShare::try_dealer`, `Hsss::split_secret`, `ShamirShare::refresh_shares`, `ShamirShare::split_stream`) require the `"std"` feature.
   - In `#![no_std]` environments (embedded, WASM), use `split_with_rng`, `try_dealer_with_rng`, `split_secret_with_rng`, and `refresh_shares_with_rng` with any `rand_core::Rng`.
 - **Fallible `Share::to_bytes()` and `Share::new()`**:
-  - `Share::to_bytes()` now returns `Result<Vec<u8>, ShamirError>`, eliminating all panic paths.
-  - `Share::new()` now returns `Result<Self, ShamirError>`, validating indices, thresholds, and enforcing maximum payload size bounds.
+  - `Share::to_bytes()` now returns `Result<Vec<u8>, ShamirError>`, eliminating all panic paths and validating share invariants.
+  - `Share::new()` now returns `Result<Self, ShamirError>`, validating indices, thresholds, compression settings, and enforcing maximum payload size bounds.
 - **Cryptographic Domain Separation**:
   - Unkeyed SHA-256 integrity digests now use `SHS1_SHA256_V3` and `SHS1_STR_SHA256_V2` domain tags, eliminating misleading "KEYED" labels.
 - **Minimum Supported Rust Version (MSRV)**:
@@ -39,9 +39,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removed `ShamirShare::dealer`**: Replaced with the fallible method `ShamirShare::try_dealer` (and `#![no_std]` variant `try_dealer_with_rng`) to safely return an error if entropy generation fails instead of panicking.
 - **Updated Share & Stream Wire Formats**: In-memory shares and stream formats now include cryptographically random salts and bind scheme metadata into integrity digests to protect against share tampering. Shares and streams created with v0.2.x cannot be reconstructed with v0.3.0.
 - **Strict Share Count in `refresh_shares`**: Refreshing shares now strictly requires all `total_shares` to prevent invalidating remaining shares.
-- **Type Signature of `Share::apply_refresh_delta`**: Now takes `&Share` instead of raw byte slices, ensuring the delta belongs to the matching share index.
+- **Type Signature of `Share::apply_refresh_delta`**: Now takes `&Share` instead of raw byte slices, ensuring the delta belongs to the matching share index and verifies scheme metadata parity.
 - **Strict Share Index Bounds**: All operations now reject share index `0` or indices greater than `total_shares`.
 - **Chunk Size Limit**: `MAX_CONFIG_CHUNK_SIZE` enforced at 64 MiB to bound memory consumption and avoid buffer overflow DoS.
+
+### Fixed
+
+- **HSSS `#![no_std]` Doctest Compilation**: Gated `split_secret` usage in doctests with `#[cfg(feature = "std")]`, resolving compilation failures when building with `--no-default-features --features "hsss"`.
+- **Wire Serialization Invariant Validation**: Enforced index, threshold, compression-without-integrity, and data length bounds in `Share::to_bytes()` to ensure serialized shares strictly round-trip through `Share::from_bytes()`.
+- **Proactive Share Refresh Metadata Validation**: `Share::apply_refresh_delta()` now strictly validates that `threshold`, `total_shares`, `integrity_check`, and `compression` match between base share and delta share before applying XOR refresh deltas, preventing cross-scheme corruption.
+- **Disallowed Compression without Integrity Checking**: `Share::new()`, `Share::from_bytes()`, and `Share::to_bytes()` now reject `compression: true, integrity_check: false` uniformly with `ShamirError::InvalidShareFormat`.
+- **Documentation Parity for Excess Shares**: Updated doc comments in `reconstruct()` and `reconstruct_from_views()` to reflect that all excess shares beyond threshold are actively verified against the interpolated polynomial in GF(2^8).
+- **Documentation Parity for HSSS Scheme Pool**: Corrected HSSS concept documentation to match the builder's exact total share sum calculation ($n = \sum \text{level\_shares}$).
+- **Streaming Header Parsing Robustness**: Eliminated panic path in streaming reconstruction (`headers[0][8..24].try_into()`) by propagating `ShamirError::InvalidShareFormat`.
+- **HSSS Splitting Ergonomics**: Changed `Hsss::split_secret` and `split_secret_with_rng` signatures from `&mut self` to `&self`, enabling concurrent secret splitting from a shared reference without requiring mutability.
 
 ### Added
 
@@ -53,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Constant-Memory Streaming**: Streaming reconstruction operates in fixed 64 KiB block slices, keeping peak memory usage low (~64 MiB max) even with high share counts and thresholds.
 - **Cumulative Buffer Budget**: Enforced 256 MiB allocation limit on `chunk_size * total_shares` in `split_stream`.
 - **Fuzzing Modernization**: Added `fuzz_share_from_bytes` target exercising wire format parsing.
+- **CI Feature Powerset Coverage**: Added `--no-default-features --features hsss` to GitHub Actions test matrix to prevent regressions on isolated feature builds.
+- **Comprehensive Regression Test Suites**: Added test coverage for `Share::to_bytes()` invariant validation, metadata mismatch rejection in `apply_refresh_delta()`, and compression flag rejection.
 
 ### Security
 
