@@ -10,10 +10,10 @@ use shamir_share::Share;
 fuzz_target!(|data: &[u8]| {
     if let Ok(share) = Share::from_bytes(data) {
         // Invariants must hold for any successfully parsed share
-        assert!(share.index > 0);
-        assert!(share.index <= share.total_shares);
-        assert!(share.threshold >= 2);
-        assert!(share.threshold <= share.total_shares);
+        assert!(share.index() > 0);
+        assert!(share.index() <= share.total_shares());
+        assert!(share.threshold() >= 2);
+        assert!(share.threshold() <= share.total_shares());
 
         // Re-serializing and de-serializing must be identical (round-trip idempotence)
         let bytes = share.to_bytes().expect("Valid share must re-serialize cleanly");

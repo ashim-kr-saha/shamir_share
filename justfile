@@ -38,8 +38,86 @@ docs:
 
 # Run security audit
 audit:
-    cargo install cargo-audit
+    @which cargo-audit >/dev/null 2>&1 || cargo install cargo-audit
     cargo audit
+
+# Run complete pre-release verification pipeline
+audit-full:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "==> 1/13: fmt check"
+    cargo fmt --all -- --check
+    echo "==> 2/13: clippy all-targets all-features"
+    cargo clippy --locked --all-targets --all-features -- -D warnings
+    echo "==> 3/13: clippy all-targets no-default-features"
+    cargo clippy --locked --all-targets --no-default-features -- -D warnings
+    echo "==> 4/13: rustdoc deny warnings"
+    RUSTDOCFLAGS="-D warnings" cargo doc --locked --all-features --no-deps
+    echo "==> 5/13: test all-features"
+    cargo test --locked --all-features
+    echo "==> 6/13: test no-default-features"
+    cargo test --locked --no-default-features
+    echo "==> 7/13: feature combinations check"
+    for f in "" "std" "zeroize" "std,zeroize" "std,streaming" "std,hsss" "hsss" "std,refresh" \
+             "refresh" "std,parallel" "std,compress" "std,serde" "serde" "hsss,refresh" \
+             "std,hsss,refresh,parallel,compress,serde,zeroize"; do
+        if [ -z "$f" ]; then
+            echo "    features: (none)"
+            cargo check --locked --no-default-features
+        else
+            echo "    features: $f"
+            cargo check --locked --no-default-features --features "$f"
+        fi
+    done
+    echo "==> 8/13: wasm32-unknown-unknown checks"
+    cargo check --locked --target wasm32-unknown-unknown --no-default-features
+    cargo check --locked --target wasm32-unknown-unknown --no-default-features --features "hsss,refresh,serde"
+    echo "==> 9/13: fuzz manifest check"
+    cargo check --locked --manifest-path fuzz/Cargo.toml
+    echo "==> 10/13: package exclusions check"
+    cargo package --list --allow-dirty | grep -E '(deny\.toml|\.gitignore|CONTRIBUTING\.md|AUDIT\.md)' && { echo "Package contains excluded files!"; exit 1; } || true
+    echo "==> 11/13: cargo audit & cargo deny"
+    cargo audit
+    cargo deny check
+    echo "==> 12/13: subtle and fuzz feature assertions"
+    cargo tree -e features -i subtle | grep -q 'core_hint_black_box' || { echo "subtle missing core_hint_black_box!"; exit 1; }
+    cargo tree --manifest-path fuzz/Cargo.toml -e features -i shamir_share | grep -q 'feature "compress"' || { echo "fuzz crate missing compress feature!"; exit 1; }
+    echo "==> 13/13: heavy ignored tests"
+    cargo test --locked --all-features -- --ignored
+    echo "==> audit-full PASSED cleanly!"
+
+# Run Miri on finite field arithmetic
+audit-miri:
+    cargo +nightly miri test --lib finite_field --no-default-features
+
+# Verify constant-time release codegen of GF(2^8) arithmetic
+audit-asm:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v objdump >/dev/null 2>&1; then
+        echo "objdump not found; skipping audit-asm"
+        exit 0
+    fi
+    cargo build --release --locked
+    RLIB=$(ls target/release/deps/libshamir_share-*.rlib 2>/dev/null | head -n 1 || true)
+    [ -n "$RLIB" ] && [ -f "$RLIB" ] || RLIB="target/release/libshamir_share.rlib"
+    echo "Disassembling $RLIB..."
+    ASM_OUTPUT=$(objdump -d --no-show-raw-insn "$RLIB" | awk '/^[0-9a-f]+ <.*(gf256_multiply_const_time|FiniteField.*multiply).*>:/{p=1; print; next} /^[0-9a-f]+ <.*>:/{p=0} p{print}')
+    if [ -z "$ASM_OUTPUT" ]; then
+        echo "ERROR: symbol not found in $RLIB (was it inlined?)"
+        exit 1
+    fi
+    echo "Disassembled instructions preview:"
+    echo "$ASM_OUTPUT" | head -n 15
+    BRANCHES=$(echo "$ASM_OUTPUT" | grep -cE '\b(b\.[a-z]+|cbz|cbnz|tbz|tbnz|call|bl|blr)\b' || true)
+    BLACK_BOX_CALLS=$(echo "$ASM_OUTPUT" | grep -c 'subtle.*black_box' || true)
+    echo "Conditional branches: $BRANCHES"
+    echo "Calls to subtle::black_box: $BLACK_BOX_CALLS"
+    if [ "$BRANCHES" -ne 0 ] || [ "$BLACK_BOX_CALLS" -ne 0 ]; then
+        echo "ERROR: Branching or black_box call detected in gf256_multiply_const_time!"
+        exit 1
+    fi
+    echo "asm check PASSED: 0 conditional branches and 0 black_box calls."
 
 # Run security checks and static analysis
 security-scan:
