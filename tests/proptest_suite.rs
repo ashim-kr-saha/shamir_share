@@ -81,9 +81,19 @@ proptest! {
         let mut shares = scheme.split(&secret).unwrap();
 
         // Corrupt an excess share (share 3)
-        if let Some(byte) = shares[2].data.first_mut() {
+        let mut corrupted_data = shares[2].data().to_vec();
+        if let Some(byte) = corrupted_data.first_mut() {
             *byte ^= 0x01;
         }
+        shares[2] = Share::new(
+            shares[2].index(),
+            corrupted_data,
+            shares[2].threshold(),
+            shares[2].total_shares(),
+            shares[2].integrity_check(),
+            shares[2].compression(),
+        )
+        .unwrap();
 
         // Reconstructing with excess corrupted share must fail
         let res = ShamirShare::reconstruct(&shares[0..3]);

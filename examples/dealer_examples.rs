@@ -15,7 +15,7 @@ fn main() {
     println!(
         "Generated {} shares with indices: {:?}",
         shares.len(),
-        shares.iter().map(|s| s.index).collect::<Vec<_>>()
+        shares.iter().map(|s| s.index()).collect::<Vec<_>>()
     );
 
     // Verify reconstruction
@@ -33,8 +33,8 @@ fn main() {
         if let Some(share) = dealer.next() {
             println!(
                 "Generated share {} with {} bytes of data",
-                share.index,
-                share.data.len()
+                share.index(),
+                share.data().len()
             );
         }
     }
@@ -46,14 +46,14 @@ fn main() {
     let even_shares: Vec<_> = shamir
         .try_dealer(secret)
         .unwrap()
-        .filter(|share| share.index % 2 == 0)
+        .filter(|share| share.index() % 2 == 0)
         .take(5)
         .collect();
 
     println!(
         "Generated {} even-indexed shares: {:?}",
         even_shares.len(),
-        even_shares.iter().map(|s| s.index).collect::<Vec<_>>()
+        even_shares.iter().map(|s| s.index()).collect::<Vec<_>>()
     );
 
     // Verify reconstruction with filtered shares

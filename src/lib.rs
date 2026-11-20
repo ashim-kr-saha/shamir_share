@@ -30,7 +30,7 @@
 //! let shares = scheme.split(secret).unwrap();
 //!
 //! // Serialize shares to canonical bytes
-//! let serialized_shares: Vec<Vec<u8>> = shares.iter().map(|s| s.to_bytes().unwrap()).collect();
+//! let serialized_shares: Vec<_> = shares.iter().map(|s| s.to_bytes().unwrap()).collect();
 //!
 //! // Deserialize and reconstruct from 3 shares
 //! let loaded_shares: Vec<Share> = serialized_shares[0..3]
@@ -56,7 +56,7 @@
 //!
 //! // Or use iterator methods for advanced filtering
 //! let even_shares: Vec<_> = scheme.try_dealer(secret).unwrap()
-//!     .filter(|share| share.index % 2 == 0)
+//!     .filter(|share| share.index() % 2 == 0)
 //!     .take(5)
 //!     .collect();
 //!
@@ -82,19 +82,45 @@ pub trait ZeroizeFallback {
 }
 
 #[cfg(not(feature = "zeroize"))]
-impl<T: AsMut<[u8]>> ZeroizeFallback for T {
+impl<const N: usize> ZeroizeFallback for [u8; N] {
     fn zeroize_fallback(&mut self) {
-        let slice = self.as_mut();
-        for b in slice.iter_mut() {
+        for b in self.iter_mut() {
             *b = core::hint::black_box(0);
         }
-        core::hint::black_box(&mut *slice);
+        core::hint::black_box(&mut self[..]);
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 }
 
 #[cfg(not(feature = "zeroize"))]
-pub struct Zeroizing<T: ZeroizeFallback>(pub T);
+impl ZeroizeFallback for [u8] {
+    fn zeroize_fallback(&mut self) {
+        for b in self.iter_mut() {
+            *b = core::hint::black_box(0);
+        }
+        core::hint::black_box(&mut *self);
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl ZeroizeFallback for alloc::vec::Vec<u8> {
+    fn zeroize_fallback(&mut self) {
+        let cap = self.capacity();
+        if cap > self.len() {
+            self.resize(cap, 0);
+        }
+        for b in self.iter_mut() {
+            *b = core::hint::black_box(0);
+        }
+        core::hint::black_box(self.as_mut_slice());
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        self.clear();
+    }
+}
+
+#[cfg(not(feature = "zeroize"))]
+pub struct Zeroizing<T: ZeroizeFallback>(T);
 
 #[cfg(not(feature = "zeroize"))]
 impl<T: ZeroizeFallback> Zeroizing<T> {
@@ -168,7 +194,7 @@ pub use shamir::{
 };
 
 #[cfg(feature = "streaming")]
-pub use shamir::{STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
+pub use shamir::{MAX_STREAM_CHUNK_SIZE, STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
 
 // Re-export common types for convenience
 pub mod prelude {
@@ -180,7 +206,7 @@ pub mod prelude {
         SplitMode, Zeroizing,
     };
     #[cfg(feature = "streaming")]
-    pub use super::{STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
+    pub use super::{MAX_STREAM_CHUNK_SIZE, STREAM_ID_SIZE, STREAM_MAGIC, STREAM_VERSION};
     pub use rand_core::Rng;
 }
 

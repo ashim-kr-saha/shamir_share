@@ -22,8 +22,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "  {}: {} shares for level '{}'",
             i,
-            share.shares.len(),
-            share.level_name
+            share.shares().len(),
+            share.level_name()
         );
     }
 

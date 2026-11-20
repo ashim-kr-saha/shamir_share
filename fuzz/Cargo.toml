@@ -9,8 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-shamir_share = { path = ".." }
-tempfile = "3.8"
+shamir_share = { path = "..", features = ["compress", "serde", "parallel"] }
 
 [[bin]]
 name = "fuzz_reconstruct"

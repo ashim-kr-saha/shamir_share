@@ -12,16 +12,27 @@ use std::io::Cursor;
 fn test_f01_header_metadata_tampering_rejected() {
     let scheme = ShamirShare::builder(3, 2).build().unwrap();
     let secret = b"TRANSFER $100 TO ALICE";
-    let mut shares = scheme.split(secret).unwrap();
+    let shares = scheme.split(secret).unwrap();
 
     // Attacker clears integrity_check bit on shares
-    for s in &mut shares {
-        s.integrity_check = false;
-    }
+    let stripped_shares: Vec<_> = shares
+        .iter()
+        .map(|s| {
+            Share::new(
+                s.index(),
+                s.data().to_vec(),
+                s.threshold(),
+                s.total_shares(),
+                false,
+                s.compression(),
+            )
+            .unwrap()
+        })
+        .collect();
 
     // Because metadata is bound into the keyed digest, reconstruction fails
     // or scheme enforcement catches it
-    let res = scheme.reconstruct_with_scheme(&shares[0..2]);
+    let res = scheme.reconstruct_with_scheme(&stripped_shares[0..2]);
     assert!(res.is_err());
 }
 
@@ -44,7 +55,17 @@ fn test_f02_linear_malleability_rejected_by_keyed_digest() {
     let diff = original[0] ^ target[0];
     assert_ne!(diff, 0);
     let payload_offset = 32 + 32; // after salt and hash
-    shares[0].data[payload_offset] ^= (l1_0_inv * FiniteField::new(diff)).0;
+    let mut data0 = shares[0].data().to_vec();
+    data0[payload_offset] ^= (l1_0_inv * FiniteField::new(diff)).0;
+    shares[0] = Share::new(
+        shares[0].index(),
+        data0,
+        shares[0].threshold(),
+        shares[0].total_shares(),
+        shares[0].integrity_check(),
+        shares[0].compression(),
+    )
+    .unwrap();
 
     let res = scheme.reconstruct_with_scheme(&shares[0..2]);
     assert!(matches!(res, Err(ShamirError::IntegrityCheckFailed)));
@@ -88,8 +109,29 @@ fn test_f04_refresh_shares_detects_tail_corruption() {
     let mut shares = scheme.split(secret).unwrap();
 
     // Corrupt shares[3] and shares[4] (indices 4 and 5)
-    shares[3].data[0] ^= 0xFF;
-    shares[4].data[0] ^= 0xFF;
+    let mut data3 = shares[3].data().to_vec();
+    data3[0] ^= 0xFF;
+    shares[3] = Share::new(
+        shares[3].index(),
+        data3,
+        shares[3].threshold(),
+        shares[3].total_shares(),
+        shares[3].integrity_check(),
+        shares[3].compression(),
+    )
+    .unwrap();
+
+    let mut data4 = shares[4].data().to_vec();
+    data4[0] ^= 0xFF;
+    shares[4] = Share::new(
+        shares[4].index(),
+        data4,
+        shares[4].threshold(),
+        shares[4].total_shares(),
+        shares[4].integrity_check(),
+        shares[4].compression(),
+    )
+    .unwrap();
 
     // refresh_shares must detect corrupted tail shares and fail
     let res = scheme.refresh_shares(&shares);
@@ -102,7 +144,16 @@ fn test_f05_reconstruct_detects_corrupted_extra_shares() {
     let mut shares = scheme.split(b"secret").unwrap();
 
     // Corrupt the 3rd share's data completely:
-    shares[2].data.fill(0xAA);
+    let data2 = vec![0xAA; shares[2].data().len()];
+    shares[2] = Share::new(
+        shares[2].index(),
+        data2,
+        shares[2].threshold(),
+        shares[2].total_shares(),
+        shares[2].integrity_check(),
+        shares[2].compression(),
+    )
+    .unwrap();
 
     // Passing all 3 shares to reconstruct_with_scheme must detect shares[2] is corrupt
     let res = scheme.reconstruct_with_scheme(&shares);
@@ -146,7 +197,7 @@ fn test_f08_delta_index_checked() {
     let scheme = ShamirShare::builder(3, 2).build().unwrap();
     let mut shares = scheme.split(b"secret payload").unwrap();
     let deltas = scheme
-        .generate_refresh_deltas(&[1, 2, 3], shares[0].data.len())
+        .generate_refresh_deltas(&[1, 2, 3], shares[0].data().len())
         .unwrap();
 
     // Applying delta for index 2 to share index 1 must fail
@@ -332,7 +383,18 @@ fn test_mas07_hsss_duplicate_level_names_and_index_binding() {
 
     let mut shares = hsss.split_secret(b"hsss secret").unwrap();
     // Swap share index: put share from level 2 (index 4) into level 1
-    shares[0].shares[0].index = 4;
+    let mut inner_shares = shares[0].shares().to_vec();
+    let bad_share = Share::new(
+        4,
+        inner_shares[0].data().to_vec(),
+        inner_shares[0].threshold(),
+        inner_shares[0].total_shares(),
+        inner_shares[0].integrity_check(),
+        inner_shares[0].compression(),
+    )
+    .unwrap();
+    inner_shares[0] = bad_share;
+    shares[0] = HierarchicalShare::new(shares[0].level_name(), inner_shares);
     let res_forged = hsss.reconstruct(&shares[0..1]);
     assert!(matches!(res_forged, Err(ShamirError::InvalidShareFormat)));
 }

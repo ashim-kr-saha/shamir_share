@@ -42,20 +42,40 @@ fn test_f02_reconstruct_with_scheme_enforces_policy() {
     let shares = scheme.split(b"sensitive payload").unwrap();
 
     // 1. Tampering with threshold in share header
-    let mut forged_threshold_shares = shares.clone();
-    for s in &mut forged_threshold_shares {
-        s.threshold = 2;
-    }
+    let forged_threshold_shares: Vec<_> = shares
+        .iter()
+        .map(|s| {
+            Share::new(
+                s.index(),
+                s.data().to_vec(),
+                2,
+                s.total_shares(),
+                s.integrity_check(),
+                s.compression(),
+            )
+            .unwrap()
+        })
+        .collect();
     assert!(matches!(
         scheme.reconstruct_with_scheme(&forged_threshold_shares[0..3]),
         Err(ShamirError::InvalidShareFormat)
     ));
 
     // 2. Tampering with integrity flag in share header
-    let mut stripped_integrity_shares = shares.clone();
-    for s in &mut stripped_integrity_shares {
-        s.integrity_check = false;
-    }
+    let stripped_integrity_shares: Vec<_> = shares
+        .iter()
+        .map(|s| {
+            Share::new(
+                s.index(),
+                s.data().to_vec(),
+                s.threshold(),
+                s.total_shares(),
+                false,
+                s.compression(),
+            )
+            .unwrap()
+        })
+        .collect();
     assert!(matches!(
         scheme.reconstruct_with_scheme(&stripped_integrity_shares[0..3]),
         Err(ShamirError::InvalidShareFormat)
@@ -157,7 +177,7 @@ fn test_f06_decentralized_refresh_deltas() {
 
     let secret = b"confidential cluster secret";
     let mut shares = scheme.split(secret).unwrap();
-    let data_len = shares[0].data.len();
+    let data_len = shares[0].data().len();
 
     // Coordinator generates zero-sum deltas knowing only indices and length
     let deltas = scheme
@@ -167,7 +187,7 @@ fn test_f06_decentralized_refresh_deltas() {
 
     // Each participant applies its delta locally
     for (share, delta) in shares.iter_mut().zip(deltas.iter()) {
-        assert_eq!(share.index, delta.index);
+        assert_eq!(share.index(), delta.index());
         share.apply_refresh_delta(delta).unwrap();
     }
 
@@ -270,9 +290,9 @@ fn test_sec07_serde_invariant_validation() {
     // 5. Valid share deserializes properly
     let json_valid = r#"{"index":1,"data":[1,2,3],"threshold":2,"total_shares":3,"integrity_check":false,"compression":false}"#;
     let s: Share = serde_json::from_str(json_valid).unwrap();
-    assert_eq!(s.index, 1);
-    assert_eq!(s.threshold, 2);
-    assert_eq!(s.total_shares, 3);
+    assert_eq!(s.index(), 1);
+    assert_eq!(s.threshold(), 2);
+    assert_eq!(s.total_shares(), 3);
 }
 
 #[test]

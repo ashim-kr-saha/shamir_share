@@ -29,7 +29,7 @@ fn main() {
         hierarchical_shares.len(),
         hierarchical_shares
             .iter()
-            .map(|h| h.shares.len())
+            .map(|h| h.shares().len())
             .sum::<usize>()
     );
 

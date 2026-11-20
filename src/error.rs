@@ -29,10 +29,6 @@ pub enum ShamirError {
     #[error("Invalid share index {0}")]
     InvalidShareIndex(u8),
 
-    /// Share with specified index was not found in storage
-    #[error("Share with index {0} not found")]
-    ShareNotFound(u8),
-
     /// General I/O error
     #[cfg(feature = "std")]
     #[error("I/O error: {0}")]
@@ -62,9 +58,21 @@ pub enum ShamirError {
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
-    /// Storage error
-    #[error("Storage error: {0}")]
-    StorageError(String),
+    /// Memory allocation failed during an operation
+    #[error("Memory allocation failed for {operation}")]
+    AllocationFailed { operation: &'static str },
+
+    /// Stream chunk index overflow
+    #[error("Stream chunk index overflow")]
+    ChunkIndexOverflow,
+
+    /// Stream chunk share length exceeds limit
+    #[error("Stream chunk share length exceeds limit")]
+    ChunkLengthOverflow,
+
+    /// Scheme requires an authentication key for this operation
+    #[error("Operation requires a configured authentication key")]
+    UnauthenticatedScheme,
 
     /// Secure random number generator failure
     #[error("RNG error: {0}")]

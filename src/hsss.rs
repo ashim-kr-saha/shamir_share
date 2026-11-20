@@ -62,11 +62,22 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AccessLevel {
     /// Human-readable name for this access level (e.g., "President", "VP", "Executive")
-    pub name: String,
+    name: String,
     /// Number of shares that participants at this level should receive
-    pub shares_count: u8,
+    shares_count: u8,
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl Drop for AccessLevel {
+    fn drop(&mut self) {
+        use crate::ZeroizeFallback;
+        let mut bytes = core::mem::take(&mut self.name).into_bytes();
+        bytes.zeroize_fallback();
+        self.shares_count = 0;
+    }
 }
 
 impl AccessLevel {
@@ -76,6 +87,18 @@ impl AccessLevel {
             name: name.into(),
             shares_count,
         }
+    }
+
+    /// Returns the name of this access level
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the number of shares that participants at this level receive
+    #[inline]
+    pub fn shares_count(&self) -> u8 {
+        self.shares_count
     }
 }
 
@@ -96,11 +119,22 @@ impl AccessLevel {
 #[non_exhaustive]
 #[derive(Clone)]
 #[cfg_attr(feature = "zeroize", derive(Zeroize, ZeroizeOnDrop))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HierarchicalShare {
     /// Name of the access level this share set belongs to
-    pub level_name: String,
+    level_name: String,
     /// The actual cryptographic shares for this participant
-    pub shares: Vec<Share>,
+    shares: Vec<Share>,
+}
+
+#[cfg(not(feature = "zeroize"))]
+impl Drop for HierarchicalShare {
+    fn drop(&mut self) {
+        use crate::ZeroizeFallback;
+        let mut bytes = core::mem::take(&mut self.level_name).into_bytes();
+        bytes.zeroize_fallback();
+        self.shares.clear();
+    }
 }
 
 impl HierarchicalShare {
@@ -110,6 +144,24 @@ impl HierarchicalShare {
             level_name: level_name.into(),
             shares,
         }
+    }
+
+    /// Returns the access level name
+    #[inline]
+    pub fn level_name(&self) -> &str {
+        &self.level_name
+    }
+
+    /// Returns a slice of the cryptographic shares in this hierarchical share
+    #[inline]
+    pub fn shares(&self) -> &[Share] {
+        &self.shares
+    }
+
+    /// Consumes the hierarchical share and returns its cryptographic shares
+    #[inline]
+    pub fn into_shares(mut self) -> Vec<Share> {
+        core::mem::take(&mut self.shares)
     }
 }
 
@@ -202,6 +254,7 @@ pub struct Hsss {
 ///     .build()
 ///     .unwrap();
 /// ```
+#[must_use]
 #[derive(Debug)]
 pub struct HsssBuilder {
     /// The master threshold for reconstruction
@@ -427,8 +480,8 @@ impl Hsss {
     ///
     /// let levels = hsss.levels();
     /// assert_eq!(levels.len(), 2);
-    /// assert_eq!(levels[0].name, "President");
-    /// assert_eq!(levels[0].shares_count, 5);
+    /// assert_eq!(levels[0].name(), "President");
+    /// assert_eq!(levels[0].shares_count(), 5);
     /// ```
     pub fn levels(&self) -> &[AccessLevel] {
         &self.levels
@@ -553,7 +606,7 @@ impl Hsss {
     ///
     /// # Process
     /// 1. Flattens all `Share` objects from all provided `HierarchicalShare` instances
-    /// 2. Calls the standard `ShamirShare::reconstruct()` method on the flattened shares
+    /// 2. Validates shares and delegates to `reconstruct_from_views_with_scheme` on the master scheme
     /// 3. Returns the reconstructed secret
     ///
     /// # Threshold Requirements
@@ -629,7 +682,7 @@ impl Hsss {
 
             let (start_idx, end_idx) = self.level_ranges[level_idx];
             for share in &hierarchical_share.shares {
-                if share.index < start_idx || share.index > end_idx {
+                if share.index() < start_idx || share.index() > end_idx {
                     return Err(ShamirError::InvalidShareFormat);
                 }
                 all_views.push(share.as_view());
@@ -834,12 +887,12 @@ mod tests {
 
         let mut share = crate::Share::new(1, vec![0x42; 32], 3, 5, true, false).unwrap();
         share.zeroize();
-        assert_eq!(share.index, 0);
-        assert_eq!(share.threshold, 0);
-        assert_eq!(share.total_shares, 0);
-        assert!(!share.integrity_check);
-        assert!(!share.compression);
-        assert_eq!(share.data.len(), 0);
+        assert_eq!(share.index(), 0);
+        assert_eq!(share.threshold(), 0);
+        assert_eq!(share.total_shares(), 0);
+        assert!(!share.integrity_check());
+        assert!(!share.compression());
+        assert_eq!(share.data().len(), 0);
 
         let mut hierarchical_share = HierarchicalShare {
             level_name: "Secret".to_string(),
@@ -881,9 +934,9 @@ mod tests {
         // Verify share properties
         for hierarchical_share in &hierarchical_shares {
             for share in &hierarchical_share.shares {
-                assert_eq!(share.threshold, 5); // Master threshold
-                assert_eq!(share.total_shares, 10); // Total shares (5+3+2)
-                assert!(share.integrity_check); // Default is true
+                assert_eq!(share.threshold(), 5); // Master threshold
+                assert_eq!(share.total_shares(), 10); // Total shares (5+3+2)
+                assert!(share.integrity_check()); // Default is true
             }
         }
     }
@@ -1091,7 +1144,7 @@ mod tests {
         let mut all_indices = Vec::new();
         for hierarchical_share in &hierarchical_shares {
             for share in &hierarchical_share.shares {
-                all_indices.push(share.index);
+                all_indices.push(share.index());
             }
         }
 
@@ -1130,7 +1183,7 @@ mod tests {
         // Verify shares have integrity_check = false
         for hierarchical_share in &hierarchical_shares {
             for share in &hierarchical_share.shares {
-                assert!(!share.integrity_check);
+                assert!(!share.integrity_check());
             }
         }
 

@@ -19,8 +19,8 @@ fn test_president_can_reconstruct_alone() {
 
     // Test: President should be able to reconstruct alone (5 shares >= threshold of 5)
     let president_shares = &all_h_shares[0]; // President is first level
-    assert_eq!(president_shares.level_name, "President");
-    assert_eq!(president_shares.shares.len(), 5);
+    assert_eq!(president_shares.level_name(), "President");
+    assert_eq!(president_shares.shares().len(), 5);
 
     let reconstructed = hsss
         .reconstruct(std::slice::from_ref(president_shares))
@@ -46,10 +46,10 @@ fn test_vp_and_executive_can_reconstruct() {
     let vp_shares = &all_h_shares[1]; // VP is second level
     let executive_shares = &all_h_shares[2]; // Executive is third level
 
-    assert_eq!(vp_shares.level_name, "VP");
-    assert_eq!(vp_shares.shares.len(), 3);
-    assert_eq!(executive_shares.level_name, "Executive");
-    assert_eq!(executive_shares.shares.len(), 2);
+    assert_eq!(vp_shares.level_name(), "VP");
+    assert_eq!(vp_shares.shares().len(), 3);
+    assert_eq!(executive_shares.level_name(), "Executive");
+    assert_eq!(executive_shares.shares().len(), 2);
 
     let reconstructed = hsss
         .reconstruct(&[vp_shares.clone(), executive_shares.clone()])
@@ -75,10 +75,10 @@ fn test_two_vps_can_reconstruct() {
     let vp1_shares = &all_h_shares[1]; // VP1 is second level
     let vp2_shares = &all_h_shares[2]; // VP2 is third level
 
-    assert_eq!(vp1_shares.level_name, "VP1");
-    assert_eq!(vp1_shares.shares.len(), 3);
-    assert_eq!(vp2_shares.level_name, "VP2");
-    assert_eq!(vp2_shares.shares.len(), 3);
+    assert_eq!(vp1_shares.level_name(), "VP1");
+    assert_eq!(vp1_shares.shares().len(), 3);
+    assert_eq!(vp2_shares.level_name(), "VP2");
+    assert_eq!(vp2_shares.shares().len(), 3);
 
     let reconstructed = hsss
         .reconstruct(&[vp1_shares.clone(), vp2_shares.clone()])
@@ -102,8 +102,8 @@ fn test_vp_alone_cannot_reconstruct() {
 
     // Test: VP alone has only 3 shares, which is less than threshold of 5
     let vp_shares = &all_h_shares[1]; // VP is second level
-    assert_eq!(vp_shares.level_name, "VP");
-    assert_eq!(vp_shares.shares.len(), 3);
+    assert_eq!(vp_shares.level_name(), "VP");
+    assert_eq!(vp_shares.shares().len(), 3);
 
     // Test using the HSSS reconstruct method
     let result = hsss.reconstruct(std::slice::from_ref(vp_shares));
@@ -113,7 +113,7 @@ fn test_vp_alone_cannot_reconstruct() {
     ));
 
     // Also test using the raw ShamirShare reconstruct method as specified in the prompt
-    let result = ShamirShare::reconstruct(&vp_shares.shares);
+    let result = ShamirShare::reconstruct(vp_shares.shares());
     assert!(matches!(
         result,
         Err(ShamirError::InsufficientShares { needed: 5, got: 3 })
@@ -140,12 +140,12 @@ fn test_three_contractors_cannot_reconstruct() {
     let contractor2_shares = &all_h_shares[3]; // Contractor2 is fourth level
     let contractor3_shares = &all_h_shares[4]; // Contractor3 is fifth level
 
-    assert_eq!(contractor1_shares.level_name, "Contractor1");
-    assert_eq!(contractor1_shares.shares.len(), 1);
-    assert_eq!(contractor2_shares.level_name, "Contractor2");
-    assert_eq!(contractor2_shares.shares.len(), 1);
-    assert_eq!(contractor3_shares.level_name, "Contractor3");
-    assert_eq!(contractor3_shares.shares.len(), 1);
+    assert_eq!(contractor1_shares.level_name(), "Contractor1");
+    assert_eq!(contractor1_shares.shares().len(), 1);
+    assert_eq!(contractor2_shares.level_name(), "Contractor2");
+    assert_eq!(contractor2_shares.shares().len(), 1);
+    assert_eq!(contractor3_shares.level_name(), "Contractor3");
+    assert_eq!(contractor3_shares.shares().len(), 1);
 
     let result = hsss.reconstruct(&[
         contractor1_shares.clone(),
@@ -370,19 +370,19 @@ fn test_share_properties_consistency() {
     let expected_total_shares = 5 + 3 + 2 + 1; // 11 total shares
 
     for hierarchical_share in &all_h_shares {
-        for share in &hierarchical_share.shares {
-            assert_eq!(share.threshold, expected_threshold);
-            assert_eq!(share.total_shares, expected_total_shares);
-            assert!(share.integrity_check); // Default should be true
-            assert!(share.index >= 1 && share.index <= expected_total_shares);
+        for share in hierarchical_share.shares() {
+            assert_eq!(share.threshold(), expected_threshold);
+            assert_eq!(share.total_shares(), expected_total_shares);
+            assert!(share.integrity_check()); // Default should be true
+            assert!(share.index() >= 1 && share.index() <= expected_total_shares);
         }
     }
 
     // Verify that all share indices are unique across all levels
     let mut all_indices = Vec::new();
     for hierarchical_share in &all_h_shares {
-        for share in &hierarchical_share.shares {
-            all_indices.push(share.index);
+        for share in hierarchical_share.shares() {
+            all_indices.push(share.index());
         }
     }
 

@@ -9,7 +9,7 @@ A security-first, high-performance implementation of Shamir's Secret Sharing sch
 ## Key Features
 
 - **Constant-Time GF(2^8) Arithmetic**: Branchless Russian Peasant Multiplication and fixed-chain Fermat inversion resist cache-timing and execution-timing side-channels.
-- **Embedded & Enclave Ready (`#![no_std]`)**: Core arithmetic, share splitting (`split_with_rng`), and reconstruction operate cleanly with only `alloc`, verifiable on WebAssembly (`wasm32-unknown-unknown`) and embedded targets.
+- **Embedded & Enclave Ready (`#![no_std]`)**: Core arithmetic, share splitting (`split_with_rng`), and reconstruction operate cleanly with only `alloc`, verifiable on WebAssembly (`wasm32-unknown-unknown`) and embedded targets. Optional features (`compress`, `parallel`, `streaming`) require `std`.
 - **Canonical Binary Wire Format**: Self-contained zero-dependency wire serialization via `Share::to_bytes()` and `Share::from_bytes(&[u8])` with format version 3 (`b"SHS1"`) framing.
 - **Modular Feature Architecture**: Opt-in capabilities keep your binary lean and dependencies minimal:
   - `streaming`: Large file chunked streaming I/O.
@@ -20,7 +20,7 @@ A security-first, high-performance implementation of Shamir's Secret Sharing sch
   - `serde`: Optional `serde::Serialize` and `serde::Deserialize` implementations.
   - `zeroize`: Secure memory hygiene clearing sensitive buffers on drop.
 - **Authenticated Shares**: Optional caller-held 256-bit authentication key verifies shares with HMAC-SHA256, protecting against active share tampering and splicing.
-- **100% Safe Rust**: `#![forbid(unsafe_code)]` enforced across the entire library.
+- **100% Safe Rust**: `#![forbid(unsafe_code)]` enforced across the entire library core. When the optional `compress` feature is enabled, decompression links to the upstream Zstandard C implementation.
 
 ## Installation
 
@@ -52,7 +52,7 @@ let secret = b"my secret data";
 let shares = scheme.split(secret).unwrap();
 
 // Serialize shares to canonical bytes (e.g. for transmission or storage)
-let serialized_shares: Vec<Vec<u8>> = shares.iter().map(|s| s.to_bytes().unwrap()).collect();
+let serialized_shares: Vec<_> = shares.iter().map(|s| s.to_bytes().unwrap()).collect();
 
 // Later, deserialize and reconstruct from any 3 shares
 let loaded_shares: Vec<Share> = serialized_shares[0..3]
@@ -77,7 +77,7 @@ let shares: Vec<_> = scheme.try_dealer(secret).unwrap().take(5).collect();
 // Or use iterator methods for advanced filtering
 let even_shares: Vec<_> = scheme.try_dealer(secret)
     .unwrap()
-    .filter(|share| share.index % 2 == 0)
+    .filter(|share| share.index() % 2 == 0)
     .take(5)
     .collect();
 
@@ -120,8 +120,8 @@ assert_eq!(reconstructed.as_slice(), secret);
 
 - **Information-Theoretic Security**: Any set of fewer than $k$ shares reveals mathematically zero information about the secret.
 - **Constant-Time Execution**: Arithmetic routines are verified branchless to protect against cache and timing attacks.
-- **Active Excess Share Verification**: When more than $k$ shares are provided, all excess shares are actively cross-verified against the reconstructed polynomial in GF(2^8). Any inconsistent or rogue share will cause reconstruction to immediately fail with `IntegrityCheckFailed`.
-- **Corruption Detection vs. Authenticity**: Unkeyed SHA-256 verification detects accidental bit-rot and framing errors. To protect against malicious share holders actively forging shares with known plaintext, configure a 256-bit authentication key with `Config::with_authentication_key`.
+- **Accidental Corruption vs. Malicious Forgery**: When more than $k$ shares are provided, all excess shares are actively cross-verified in GF($2^8$) against the polynomial formed by the first $k$ shares. Inconsistent or accidentally corrupted excess shares will cause reconstruction to fail with `IntegrityCheckFailed`. However, excess share verification does not identify which share is rogue, nor does it protect against an active adversary possessing $k-1$ shares who crafts a rogue share targeting chosen plaintext.
+- **Corruption Detection vs. Authenticity**: Unkeyed SHA-256 verification detects accidental bit-rot and framing errors. To protect against malicious share holders actively forging shares with known plaintext, configure a 256-bit authentication key with `Config::with_authentication_key` and use `reconstruct_authenticated` (or `reconstruct_from_views_authenticated`) for guaranteed authenticity verification.
 - **Side-Channel Caution with Compression**: When `compress` is enabled, ciphertext length varies with plaintext entropy (CRIME/BREACH style leaks). Do not enable compression for fixed-entropy secrets like cryptographic keys.
 
 ## Development & Testing

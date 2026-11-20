@@ -1,6 +1,6 @@
 #![cfg(all(feature = "refresh", feature = "std"))]
 
-use shamir_share::{Config, ShamirError, ShamirShare};
+use shamir_share::{Config, ShamirError, ShamirShare, Share};
 
 #[test]
 fn test_refreshed_shares_reconstruct_correctly() {
@@ -39,24 +39,27 @@ fn test_refreshed_shares_are_different_from_original() {
 
     // Assert that the data field of the first original share is not equal to
     // the data field of the first refreshed share
-    assert_ne!(original_shares[0].data, refreshed_shares[0].data);
+    assert_ne!(original_shares[0].data(), refreshed_shares[0].data());
 
     // Also verify that all corresponding shares have different data
     for i in 0..5 {
-        assert_ne!(original_shares[i].data, refreshed_shares[i].data);
+        assert_ne!(original_shares[i].data(), refreshed_shares[i].data());
     }
 
     // But verify that metadata is preserved
     for i in 0..5 {
-        assert_eq!(original_shares[i].index, refreshed_shares[i].index);
-        assert_eq!(original_shares[i].threshold, refreshed_shares[i].threshold);
+        assert_eq!(original_shares[i].index(), refreshed_shares[i].index());
         assert_eq!(
-            original_shares[i].total_shares,
-            refreshed_shares[i].total_shares
+            original_shares[i].threshold(),
+            refreshed_shares[i].threshold()
         );
         assert_eq!(
-            original_shares[i].integrity_check,
-            refreshed_shares[i].integrity_check
+            original_shares[i].total_shares(),
+            refreshed_shares[i].total_shares()
+        );
+        assert_eq!(
+            original_shares[i].integrity_check(),
+            refreshed_shares[i].integrity_check()
         );
     }
 }
@@ -213,16 +216,16 @@ fn test_refresh_preserves_share_metadata() {
 
     // Verify that all metadata is preserved
     for (original, refreshed) in original_shares.iter().zip(refreshed_shares.iter()) {
-        assert_eq!(original.index, refreshed.index);
-        assert_eq!(original.threshold, refreshed.threshold);
-        assert_eq!(original.total_shares, refreshed.total_shares);
-        assert_eq!(original.integrity_check, refreshed.integrity_check);
+        assert_eq!(original.index(), refreshed.index());
+        assert_eq!(original.threshold(), refreshed.threshold());
+        assert_eq!(original.total_shares(), refreshed.total_shares());
+        assert_eq!(original.integrity_check(), refreshed.integrity_check());
 
         // But data should be different
-        assert_ne!(original.data, refreshed.data);
+        assert_ne!(original.data(), refreshed.data());
 
         // And data length should be the same
-        assert_eq!(original.data.len(), refreshed.data.len());
+        assert_eq!(original.data().len(), refreshed.data().len());
     }
 }
 
@@ -258,10 +261,10 @@ fn test_multiple_refresh_rounds() {
     assert_eq!(reconstructed_v4.as_slice(), secret);
 
     // But all share data should be different
-    assert_ne!(shares_v1[0].data, shares_v2[0].data);
-    assert_ne!(shares_v2[0].data, shares_v3[0].data);
-    assert_ne!(shares_v3[0].data, shares_v4[0].data);
-    assert_ne!(shares_v1[0].data, shares_v4[0].data);
+    assert_ne!(shares_v1[0].data(), shares_v2[0].data());
+    assert_ne!(shares_v2[0].data(), shares_v3[0].data());
+    assert_ne!(shares_v3[0].data(), shares_v4[0].data());
+    assert_ne!(shares_v1[0].data(), shares_v4[0].data());
 }
 
 #[test]
@@ -311,7 +314,15 @@ fn test_refresh_with_index_out_of_bounds_errors() {
     let shamir = ShamirShare::builder(3, 2).build().unwrap();
     let secret = b"out of bounds index test";
     let mut shares = shamir.split(secret).unwrap();
-    shares[2].index = 4; // total_shares is 3
+    shares[2] = Share::new(
+        4,
+        shares[2].data().to_vec(),
+        shares[2].threshold(),
+        4,
+        shares[2].integrity_check(),
+        shares[2].compression(),
+    )
+    .unwrap(); // total_shares in shamir is 3, but share index is 4
 
     let result = shamir.refresh_shares(&shares);
     assert!(matches!(result, Err(ShamirError::InvalidShareIndex(4))));
@@ -361,5 +372,5 @@ fn test_apply_refresh_delta_rejects_mismatched_metadata() {
     // Matching parameters succeed
     let delta_matching = Share::new(1, vec![0x11; 32], 2, 3, true, false).unwrap();
     assert!(base_share.apply_refresh_delta(&delta_matching).is_ok());
-    assert_eq!(base_share.data[0], 0x42 ^ 0x11);
+    assert_eq!(base_share.data()[0], 0x42 ^ 0x11);
 }

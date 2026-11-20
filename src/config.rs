@@ -15,6 +15,7 @@ pub enum SplitMode {
 }
 
 /// Configuration options for splitting and reconstruction
+#[must_use]
 #[non_exhaustive]
 #[derive(Clone)]
 pub struct Config {
@@ -77,36 +78,42 @@ impl Config {
     }
 
     /// Returns the configured chunk size
+    #[must_use]
     #[inline]
     pub fn chunk_size(&self) -> usize {
         self.chunk_size
     }
 
     /// Returns the configured split mode
+    #[must_use]
     #[inline]
     pub fn mode(&self) -> SplitMode {
         self.mode
     }
 
     /// Returns whether compression is enabled
+    #[must_use]
     #[inline]
     pub fn compression(&self) -> bool {
         self.compression
     }
 
     /// Returns whether integrity checking is enabled
+    #[must_use]
     #[inline]
     pub fn integrity_check(&self) -> bool {
         self.integrity_check
     }
 
     /// Returns the maximum allowed cumulative decompressed bytes for streams, if configured
+    #[must_use]
     #[inline]
     pub fn max_decompressed_stream_size(&self) -> Option<u64> {
         self.max_decompressed_stream_size
     }
 
     /// Returns the configured authentication key, if set
+    #[must_use]
     #[inline]
     pub fn authentication_key(&self) -> Option<&[u8; 32]> {
         self.authentication_key.as_deref()
@@ -174,6 +181,12 @@ impl Config {
         if self.compression && !self.integrity_check {
             return Err(ShamirError::InvalidConfig(
                 "Compression cannot be enabled without integrity checking".into(),
+            ));
+        }
+
+        if self.authentication_key.is_some() && !self.integrity_check {
+            return Err(ShamirError::InvalidConfig(
+                "An authentication key requires integrity checking; without it no digest is produced and the key is never used".into(),
             ));
         }
 

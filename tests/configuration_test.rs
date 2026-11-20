@@ -15,7 +15,7 @@ fn test_builder_defaults() {
     let shares = shamir_mut.split(secret).unwrap();
 
     // Default configuration should have integrity_check = true
-    assert!(shares[0].integrity_check);
+    assert!(shares[0].integrity_check());
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn test_builder_with_custom_config() {
     let shares = shamir_mut.split(secret).unwrap();
 
     // Custom configuration should have integrity_check = false
-    assert!(!shares[0].integrity_check);
+    assert!(!shares[0].integrity_check());
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn test_split_with_integrity_check_disabled() {
 
     // Assert that the length of the data in each generated share is exactly equal to secret.len()
     for share in &shares {
-        assert_eq!(share.data.len(), secret.len());
+        assert_eq!(share.data().len(), secret.len());
     }
 
     // Reconstruct without scheme is rejected (MAS-02)
@@ -85,8 +85,8 @@ fn test_split_with_integrity_check_enabled() {
     // Assert that the length of the data in each generated share is greater than secret.len()
     // Specifically, secret.len() + 64 (32-byte ephemeral salt + 32-byte SHA-256 hash)
     for share in &shares {
-        assert!(share.data.len() > secret.len());
-        assert_eq!(share.data.len(), secret.len() + 64);
+        assert!(share.data().len() > secret.len());
+        assert_eq!(share.data().len(), secret.len() + 64);
     }
 
     // Reconstruct the secret and assert it matches

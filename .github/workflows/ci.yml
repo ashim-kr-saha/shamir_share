@@ -60,7 +60,7 @@ jobs:
         uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
 
       - name: Run tests (${{ matrix.feature-set.name }})
-        run: cargo test ${{ matrix.feature-set.flags }}
+        run: cargo test --locked ${{ matrix.feature-set.flags }}
 
   no-std-check:
     name: No-Std (Wasm32) Check
@@ -77,13 +77,13 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Check wasm32 compilation without default features
-        run: cargo check --target wasm32-unknown-unknown --no-default-features
+        run: cargo check --locked --target wasm32-unknown-unknown --no-default-features
 
       - name: Check wasm32 with hsss and refresh
-        run: cargo check --target wasm32-unknown-unknown --no-default-features --features "hsss,refresh"
+        run: cargo check --locked --target wasm32-unknown-unknown --no-default-features --features "hsss,refresh"
 
       - name: Check wasm32 with serde
-        run: cargo check --target wasm32-unknown-unknown --no-default-features --features "serde"
+        run: cargo check --locked --target wasm32-unknown-unknown --no-default-features --features "serde"
 
   msrv-check:
     name: MSRV Check (1.88.0)
@@ -101,7 +101,7 @@ jobs:
         uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
 
       - name: Check MSRV compilation
-        run: cargo check --all-targets --all-features
+        run: cargo check --locked --all-targets --all-features
 
   doc-tests:
     name: Documentation Tests
@@ -119,7 +119,7 @@ jobs:
         uses: Swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2.7.7
 
       - name: Run doc tests
-        run: cargo test --doc --all-features
+        run: cargo test --locked --doc --all-features
 
   lints:
     name: Lints and Formatting
@@ -142,13 +142,51 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy (all features)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Clippy (no default features)
-        run: cargo clippy --all-targets --no-default-features -- -D warnings
+        run: cargo clippy --locked --all-targets --no-default-features -- -D warnings
 
       - name: Verify Fuzz Targets Compile
         run: cargo check --manifest-path fuzz/Cargo.toml
 
       - name: Verify Package Dry-Run
         run: cargo package --allow-dirty
+
+  security-audit:
+    name: Security & License Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install audit tools
+        run: cargo install cargo-audit cargo-deny --locked
+
+      - name: Run cargo audit
+        run: cargo audit
+
+      - name: Run cargo deny check
+        run: cargo deny check --all-features
+
+  miri:
+    name: Miri Undefined Behavior Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install nightly toolchain with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run Miri on finite_field
+        run: cargo miri test --lib finite_field --no-default-features

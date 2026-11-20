@@ -32,7 +32,7 @@ fn test_highly_compressible_data() {
     let uncompressed_shares = shamir_uncompressed.split(&secret).unwrap();
 
     assert!(
-        compressed_shares[0].data.len() < uncompressed_shares[0].data.len(),
+        compressed_shares[0].data().len() < uncompressed_shares[0].data().len(),
         "Compressed share should be smaller"
     );
 
@@ -122,11 +122,21 @@ fn test_decompression_bomb_rejected() {
         .with_config(Config::new().with_integrity_check(false))
         .build()
         .unwrap();
-    let mut bomb_shares = raw_scheme.split(&raw_data).unwrap();
-    for s in &mut bomb_shares {
-        s.integrity_check = true;
-        s.compression = true;
-    }
+    let raw_shares = raw_scheme.split(&raw_data).unwrap();
+    let bomb_shares: Vec<_> = raw_shares
+        .iter()
+        .map(|s| {
+            shamir_share::Share::new(
+                s.index(),
+                s.data().to_vec(),
+                s.threshold(),
+                s.total_shares(),
+                true,
+                true,
+            )
+            .unwrap()
+        })
+        .collect();
 
     // Reconstruction must verify hash, then reject payloads exceeding 64 MiB with DecompressionError
     let result = ShamirShare::reconstruct(&bomb_shares[0..2]);
